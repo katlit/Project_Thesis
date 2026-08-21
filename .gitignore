@@ -1,0 +1,38 @@
+# Datasets and large archives
+data/
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.crdownload
+
+# Generated experiment output
+plot/
+plots/
+outputs/
+results/
+checkpoints/
+wandb/
+
+# Notebook and Python caches
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+
+# Local environments and secrets
+.env
+.env.*
+.venv/
+venv/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+debug.log
+
+# Large generated/reference documents
+*.pdf
+plan.docx
+~$*.docx
