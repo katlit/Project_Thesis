@@ -39,7 +39,7 @@ cells = [
     %pip -q install -r /content/vggt/requirements.txt
     '''),
     code(r'''
-    import os, shutil, subprocess, sys
+    import getpass, os, shutil, subprocess, sys
     from pathlib import Path
     import matplotlib.pyplot as plt
     import numpy as np
@@ -47,7 +47,7 @@ cells = [
     import plotly.graph_objects as go
     import torch
     from PIL import Image
-    from google.colab import drive, userdata
+    from google.colab import drive
 
     if not torch.cuda.is_available():
         raise RuntimeError("Connect a Colab GPU runtime before running notebook 05.")
@@ -57,7 +57,12 @@ cells = [
     CODE_ROOT = Path("/content/Project_Thesis_code")
     REPOSITORY = "ht" + "tps:" + chr(47)*2 + "github.com" + chr(47) + "katlit" + chr(47) + "Project_Thesis.git"
     BRANCH = "codex/hq200-example-notebook"
-    token = userdata.get("GITHUB_TOKEN")
+    # Colab Secrets cannot be fetched from a hosted kernel connected through
+    # VS Code. Read an optional environment value, otherwise show a hidden
+    # one-time prompt. The token is never written to the notebook or Git URL.
+    token = os.environ.get("GITHUB_TOKEN") or getpass.getpass(
+        "GitHub fine-grained token (repository Contents: Read-only): "
+    )
     if not token:
         raise RuntimeError("Add a Colab secret named GITHUB_TOKEN with read access to the private repository.")
     environment = os.environ.copy()
