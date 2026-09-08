@@ -36,7 +36,7 @@ cells = [
     code(r'''
     # Keep Colab's CUDA-enabled torch/torchvision. VGGT's legacy
     # requirements.txt pins torch 2.3.1, which has no Python 3.13 wheel.
-    %pip -q install scipy plotly pandas pillow huggingface_hub einops safetensors opencv-python "gsplat==1.3.0"
+    %pip -q install scipy pandas pillow huggingface_hub einops safetensors opencv-python "gsplat==1.3.0"
     !test -d /content/vggt/.git || git clone -q https://github.com/facebookresearch/vggt.git /content/vggt
     %pip -q install --no-deps -e /content/vggt
     '''),
@@ -46,7 +46,6 @@ cells = [
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
-    import plotly.graph_objects as go
     import torch
     from PIL import Image
     from google.colab import drive
@@ -145,17 +144,45 @@ cells = [
     points = prediction["world_points"][keep]
     point_colors = colors[keep]
     point_confidence = confidence[keep]
+    finite = np.isfinite(points).all(axis=1) & np.isfinite(point_colors).all(axis=1)
+    points, point_colors, point_confidence = points[finite], point_colors[finite], point_confidence[finite]
+    print(f"Foreground/confident finite points: {len(points):,}")
+    if not len(points):
+        raise ValueError(
+            "No points survived the mask/confidence filter. "
+            "Inspect masks and confidence, or temporarily lower CONFIDENCE_THRESHOLD."
+        )
     rng = np.random.default_rng(42)
-    if len(points) > 80_000:
-        chosen = rng.choice(len(points), 80_000, replace=False)
+    if len(points) > 20_000:
+        chosen = rng.choice(len(points), 20_000, replace=False)
         points, point_colors, point_confidence = points[chosen], point_colors[chosen], point_confidence[chosen]
-    figure = go.Figure(go.Scatter3d(
-        x=points[:, 0], y=points[:, 1], z=points[:, 2], mode="markers",
-        marker={"size": 1.2, "color": np.clip(point_colors, 0, 1)},
-        text=[f"confidence={value:.3f}" for value in point_confidence], hoverinfo="text",
-    ))
-    figure.update_layout(title=f"VGGT foreground point map — {SCENE}", scene_aspectmode="data", height=700)
-    figure.show()
+
+    # Static Matplotlib output is reliable through a VS Code-hosted Colab
+    # connection; Plotly's interactive renderer may remain blank there.
+    centered = points - np.median(points, axis=0)
+    radius = np.linalg.norm(centered, axis=1)
+    radius_limit = np.percentile(radius, 99)
+    visible = radius <= radius_limit
+    centered = centered[visible]
+    display_colors = np.clip(point_colors[visible], 0, 1)
+
+    fig = plt.figure(figsize=(15, 6))
+    ax_rgb = fig.add_subplot(121, projection="3d")
+    ax_conf = fig.add_subplot(122, projection="3d")
+    ax_rgb.scatter(centered[:, 0], centered[:, 1], centered[:, 2], c=display_colors, s=0.7)
+    confidence_scatter = ax_conf.scatter(
+        centered[:, 0], centered[:, 1], centered[:, 2],
+        c=point_confidence[visible], cmap="viridis", vmin=0, vmax=1, s=0.7,
+    )
+    ax_rgb.set_title("VGGT foreground point map — RGB")
+    ax_conf.set_title("VGGT foreground point map — normalized confidence")
+    for axis in [ax_rgb, ax_conf]:
+        axis.set_box_aspect(np.ptp(centered, axis=0).clip(min=1e-6))
+        axis.set_xlabel("X"); axis.set_ylabel("Y"); axis.set_zlabel("Z")
+        axis.view_init(elev=18, azim=-65)
+    fig.colorbar(confidence_scatter, ax=ax_conf, shrink=0.65, label="confidence")
+    plt.tight_layout()
+    plt.show()
     '''),
     md(r'''
     ## Confidence diagnostic on known views
