@@ -41,7 +41,7 @@ cells = [
     %pip -q install --no-deps -e /content/vggt
     '''),
     code(r'''
-    import getpass, os, shutil, subprocess, sys
+    import shutil, subprocess, sys
     from pathlib import Path
     import matplotlib.pyplot as plt
     import numpy as np
@@ -59,25 +59,13 @@ cells = [
     CODE_ROOT = Path("/content/Project_Thesis_code")
     REPOSITORY = "ht" + "tps:" + chr(47)*2 + "github.com" + chr(47) + "katlit" + chr(47) + "Project_Thesis.git"
     BRANCH = "codex/hq200-example-notebook"
-    # Colab Secrets cannot be fetched from a hosted kernel connected through
-    # VS Code. Read an optional environment value, otherwise show a hidden
-    # one-time prompt. The token is never written to the notebook or Git URL.
-    token = os.environ.get("GITHUB_TOKEN") or getpass.getpass(
-        "GitHub fine-grained token (repository Contents: Read-only): "
-    )
-    if not token:
-        raise RuntimeError("Add a Colab secret named GITHUB_TOKEN with read access to the private repository.")
-    environment = os.environ.copy()
-    environment.update({
-        "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
-        "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
-    })
+    # The project repository is public, so no GitHub token is required.
     if CODE_ROOT.exists() and not (CODE_ROOT / ".git").is_dir():
         shutil.rmtree(CODE_ROOT)
     command = (["git", "clone", "--depth", "1", "--branch", BRANCH, REPOSITORY, str(CODE_ROOT)]
                if not CODE_ROOT.exists() else
                ["git", "-C", str(CODE_ROOT), "pull", "--ff-only", "origin", BRANCH])
-    subprocess.run(command, env=environment, check=True)
+    subprocess.run(command, check=True)
     sys.path[:0] = [str(CODE_ROOT / "code"), "/content/vggt"]
     '''),
     code(r'''
