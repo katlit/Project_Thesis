@@ -34,9 +34,11 @@ cells = [
     With 8 real views, neighboring real cameras are approximately 45° apart. Ten interior views divide each interval into 11 steps, so the nominal step is approximately **4.09°**. Exactly 4.5° would require nine interior views.
     '''),
     code(r'''
-    %pip -q install scipy plotly pandas pillow "gsplat==1.3.0"
+    # Keep Colab's CUDA-enabled torch/torchvision. VGGT's legacy
+    # requirements.txt pins torch 2.3.1, which has no Python 3.13 wheel.
+    %pip -q install scipy plotly pandas pillow huggingface_hub einops safetensors opencv-python "gsplat==1.3.0"
     !test -d /content/vggt/.git || git clone -q https://github.com/facebookresearch/vggt.git /content/vggt
-    %pip -q install -r /content/vggt/requirements.txt
+    %pip -q install --no-deps -e /content/vggt
     '''),
     code(r'''
     import getpass, os, shutil, subprocess, sys
