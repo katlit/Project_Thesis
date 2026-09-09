@@ -2,12 +2,28 @@
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 def _to_numpy(value):
     if isinstance(value, torch.Tensor):
         return value.detach().float().cpu().numpy()
     return np.asarray(value)
+
+
+def _resize_tracker_field(value, size, channels_last=False):
+    """Resize a dense VGGT field for the square-only official tracker."""
+    array = _to_numpy(value)
+    tensor = torch.as_tensor(array, dtype=torch.float32)
+    if channels_last:
+        tensor = tensor.permute(0, 3, 1, 2)
+    elif tensor.ndim == 3:
+        tensor = tensor[:, None]
+    resized = F.interpolate(tensor, size=(size, size), mode="bilinear", align_corners=False)
+    if channels_last:
+        return resized.permute(0, 2, 3, 1).cpu().numpy()
+    resized = resized.cpu().numpy()
+    return resized[:, 0] if array.ndim == 3 else resized
 
 
 def _foreground_track_mask(tracks, visibility, masks, visibility_threshold):
@@ -52,15 +68,34 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
     from vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap
     from vggt.dependency.track_predict import predict_tracks
 
+    original_height, original_width = images.shape[-2:]
+    tracker_images = images
+    tracker_confidence = depth_confidence
+    tracker_points = point_maps
+    scale_x = scale_y = 1.0
+    if original_height != original_width:
+        # VGGT's optional predict_tracks path currently asserts H == W. Resize
+        # only its tracking inputs, then return tracks to original coordinates.
+        tracker_size = max(original_height, original_width)
+        tracker_images = F.interpolate(
+            images, size=(tracker_size, tracker_size), mode="bilinear", align_corners=False
+        )
+        tracker_confidence = _resize_tracker_field(depth_confidence, tracker_size)
+        tracker_points = _resize_tracker_field(point_maps, tracker_size, channels_last=True)
+        scale_x = tracker_size / original_width
+        scale_y = tracker_size / original_height
+
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     with torch.inference_mode(), torch.cuda.amp.autocast(dtype=dtype):
         tracks, visibility, track_confidence, tracked_points, tracked_rgb = predict_tracks(
-            images, conf=depth_confidence, points_3d=point_maps, masks=None,
+            tracker_images, conf=tracker_confidence, points_3d=tracker_points, masks=None,
             max_query_pts=max_query_points,
             query_frame_num=min(query_frame_count, len(images)),
             keypoint_extractor="aliked+sp", fine_tracking=fine_tracking,
         )
     tracks = _to_numpy(tracks)
+    tracks[..., 0] /= scale_x
+    tracks[..., 1] /= scale_y
     tracked_points = _to_numpy(tracked_points)
     tracked_rgb = _to_numpy(tracked_rgb) if tracked_rgb is not None else None
     track_mask = _foreground_track_mask(tracks, visibility, masks, visibility_threshold)
@@ -91,6 +126,8 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
         raise RuntimeError(f"BA registered {len(refined_extrinsics)}/{len(extrinsics)} cameras.")
     diagnostics = {
         "registered_cameras": len(refined_extrinsics),
+        "tracker_square_size": int(max(original_height, original_width)),
+        "tracker_resized_from_non_square": bool(original_height != original_width),
         "candidate_tracks": int(track_mask.shape[1]),
         "valid_observations": int(track_mask.sum()),
         "valid_tracks": int(np.asarray(valid_track_mask).sum()),
