@@ -86,7 +86,7 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
         scale_y = tracker_size / original_height
 
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
-    with torch.inference_mode(), torch.cuda.amp.autocast(dtype=dtype):
+    with torch.inference_mode(), torch.amp.autocast("cuda", dtype=dtype):
         tracks, visibility, track_confidence, tracked_points, tracked_rgb = predict_tracks(
             tracker_images, conf=tracker_confidence, points_3d=tracker_points, masks=None,
             max_query_pts=max_query_points,
