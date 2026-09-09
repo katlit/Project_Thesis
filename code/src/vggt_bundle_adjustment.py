@@ -53,6 +53,71 @@ def _camera_matrix(camera):
     return np.asarray(matrix, dtype=np.float32)
 
 
+def _make_pycolmap_image(pycolmap, image_id, camera_id, pose):
+    """Construct an Image across the PyCOLMAP 3.10 and newer APIs."""
+    arguments = dict(
+        name=f"image_{image_id}", camera_id=camera_id, cam_from_world=pose
+    )
+    try:
+        return pycolmap.Image(image_id=image_id, **arguments)
+    except (TypeError, AttributeError):
+        return pycolmap.Image(id=image_id, **arguments)
+
+
+def _tracks_to_pycolmap(pycolmap, points3d, extrinsics, intrinsics, tracks,
+                        masks, image_width, image_height, points_rgb,
+                        max_reprojection_error, shared_camera):
+    """Version-tolerant replacement for VGGT's PyCOLMAP conversion helper."""
+    from vggt.dependency.projection import project_3D_points_np
+
+    projected, camera_points = project_3D_points_np(points3d, extrinsics, intrinsics)
+    reprojection_error = np.linalg.norm(projected - tracks, axis=-1)
+    masks = masks & (reprojection_error < max_reprojection_error)
+    masks &= camera_points[:, -1] > 0
+    if masks.sum(axis=1).min() < 64:
+        return None, None
+
+    reconstruction = pycolmap.Reconstruction()
+    valid_tracks = masks.sum(axis=0) >= 2
+    valid_indices = np.flatnonzero(valid_tracks)
+    point_ids = []
+    for index in valid_indices:
+        point_ids.append(reconstruction.add_point3D(
+            points3d[index], pycolmap.Track(), points_rgb[index]
+        ))
+
+    shared = None
+    for view in range(len(extrinsics)):
+        if shared is None or not shared_camera:
+            parameters = np.array([
+                intrinsics[view, 0, 0], intrinsics[view, 1, 1],
+                intrinsics[view, 0, 2], intrinsics[view, 1, 2],
+            ])
+            shared = pycolmap.Camera(
+                model="PINHOLE", width=int(image_width), height=int(image_height),
+                params=parameters, camera_id=view + 1,
+            )
+            reconstruction.add_camera(shared)
+        pose = pycolmap.Rigid3d(
+            pycolmap.Rotation3d(extrinsics[view, :3, :3]),
+            extrinsics[view, :3, 3],
+        )
+        image = _make_pycolmap_image(pycolmap, view + 1, shared.camera_id, pose)
+        observations = []
+        for point_id, original_index in zip(point_ids, valid_indices):
+            if masks[view, original_index]:
+                observation_index = len(observations)
+                observations.append(pycolmap.Point2D(tracks[view, original_index], point_id))
+                reconstruction.points3D[point_id].track.add_element(
+                    view + 1, observation_index
+                )
+        image.points2D = pycolmap.ListPoint2D(observations)
+        if hasattr(image, "registered"):
+            image.registered = True
+        reconstruction.add_image(image)
+    return reconstruction, valid_tracks
+
+
 def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, masks,
                                extrinsics, intrinsics, max_reprojection_error=8.0,
                                visibility_threshold=0.2, max_query_points=4096,
@@ -65,7 +130,6 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
     optimized by BA; callers must re-unproject it with the returned cameras.
     """
     import pycolmap
-    from vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap
     from vggt.dependency.track_predict import predict_tracks
 
     original_height, original_width = images.shape[-2:]
@@ -101,11 +165,10 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
     track_mask = _foreground_track_mask(tracks, visibility, masks, visibility_threshold)
     if tracked_rgb is None:
         raise RuntimeError("VGGT tracker did not return colors for its sparse 3D points.")
-    reconstruction, valid_track_mask = batch_np_matrix_to_pycolmap(
-        tracked_points, np.asarray(extrinsics), np.asarray(intrinsics), tracks,
-        np.asarray(images.shape[-2:]), masks=track_mask,
-        max_reproj_error=max_reprojection_error, shared_camera=shared_camera,
-        camera_type="PINHOLE", points_rgb=tracked_rgb,
+    reconstruction, valid_track_mask = _tracks_to_pycolmap(
+        pycolmap, tracked_points, np.asarray(extrinsics), np.asarray(intrinsics),
+        tracks, track_mask, original_width, original_height, tracked_rgb,
+        max_reprojection_error, shared_camera,
     )
     if reconstruction is None:
         raise RuntimeError("VGGT tracks could not form a COLMAP reconstruction.")
