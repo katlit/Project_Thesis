@@ -367,3 +367,7 @@ notebook = {
     json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
 )
 print("Built 05_vggt_dense_pseudoview_adaptive_3dgs.ipynb")
+
+# Keep the reference-mesh evaluation in regenerated copies while preserving
+# the insertion logic separately from the already large notebook builder.
+exec((HERE / "_insert_geometry_evaluation.py").read_text(encoding="utf-8"))
