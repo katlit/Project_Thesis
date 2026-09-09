@@ -53,11 +53,11 @@ def _camera_matrix(camera):
     return np.asarray(matrix, dtype=np.float32)
 
 
-def _make_pycolmap_image(pycolmap, image_id, camera_id, pose):
-    """Construct an Image across the PyCOLMAP 3.10 and newer APIs."""
-    arguments = dict(
-        name=f"image_{image_id}", camera_id=camera_id, cam_from_world=pose
-    )
+def _make_pycolmap_image(pycolmap, image_id, camera_id, pose=None):
+    """Construct an Image across the pre-rig and rig-based PyCOLMAP APIs."""
+    arguments = dict(name=f"image_{image_id}", camera_id=camera_id)
+    if pose is not None:
+        arguments["cam_from_world"] = pose
     try:
         return pycolmap.Image(image_id=image_id, **arguments)
     except (TypeError, AttributeError):
@@ -97,12 +97,18 @@ def _tracks_to_pycolmap(pycolmap, points3d, extrinsics, intrinsics, tracks,
                 model="PINHOLE", width=int(image_width), height=int(image_height),
                 params=parameters, camera_id=view + 1,
             )
-            reconstruction.add_camera(shared)
+            if hasattr(reconstruction, "add_camera_with_trivial_rig"):
+                reconstruction.add_camera_with_trivial_rig(shared)
+            else:
+                reconstruction.add_camera(shared)
         pose = pycolmap.Rigid3d(
             pycolmap.Rotation3d(extrinsics[view, :3, :3]),
             extrinsics[view, :3, 3],
         )
-        image = _make_pycolmap_image(pycolmap, view + 1, shared.camera_id, pose)
+        modern_rig_api = hasattr(reconstruction, "add_image_with_trivial_frame")
+        image = _make_pycolmap_image(
+            pycolmap, view + 1, shared.camera_id, None if modern_rig_api else pose
+        )
         observations = []
         for point_id, original_index in zip(point_ids, valid_indices):
             if masks[view, original_index]:
@@ -111,10 +117,15 @@ def _tracks_to_pycolmap(pycolmap, points3d, extrinsics, intrinsics, tracks,
                 reconstruction.points3D[point_id].track.add_element(
                     view + 1, observation_index
                 )
-        image.points2D = pycolmap.ListPoint2D(observations)
-        if hasattr(image, "registered"):
+        point_list = getattr(pycolmap, "Point2DList", None)
+        if point_list is None:
+            point_list = pycolmap.ListPoint2D
+        image.points2D = point_list(observations)
+        if modern_rig_api:
+            reconstruction.add_image_with_trivial_frame(image, pose)
+        else:
             image.registered = True
-        reconstruction.add_image(image)
+            reconstruction.add_image(image)
     return reconstruction, valid_tracks
 
 
