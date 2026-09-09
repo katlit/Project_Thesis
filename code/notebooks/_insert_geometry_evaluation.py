@@ -118,9 +118,9 @@ else:
         "reference_units_per_metre": REFERENCE_UNITS_PER_METRE,
     })
     geometry_summary = pd.DataFrame([metric_values])
-    geometry_summary.to_csv(RUN_ROOT / "reference_geometry_metrics.csv", index=False)
+    geometry_summary.to_csv(MESH_EVALUATION_ROOT / "metrics.csv", index=False)
     np.savez_compressed(
-        RUN_ROOT / "reference_geometry_alignment.npz",
+        MESH_EVALUATION_ROOT / "alignment.npz",
         scale=transform["scale"], rotation=transform["rotation"],
         translation=transform["translation"], predicted_aligned=predicted_aligned,
         reference_points=reference_points, pred_to_ref=pred_to_ref, ref_to_pred=ref_to_pred,

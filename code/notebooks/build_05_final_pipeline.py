@@ -73,11 +73,12 @@ cells = [
 
     PROJECT_ROOT = Path("/content/drive/MyDrive/ITU/3D/Thesis")
     METHOD_MANIFEST = PROJECT_ROOT / "data_processed/method_inputs/manifest.csv"
-    OUTPUT_ROOT = PROJECT_ROOT / "experiments/vggt_dense_teacher_adaptive_3dgs"
+    EXPERIMENT_ROOT = PROJECT_ROOT / "experiments"
 
     # ---------- scene ----------
     DATASET = "3DRealCar"              # or IndustrialInventory
     SCENE = None                        # None chooses first available scene
+    REFLECTION_HANDLED = False          # True selects the future *_ref input/output variant
 
     # ---------- VGGT geometry knobs ----------
     VGGT_MODEL = "facebook/VGGT-1B"
@@ -108,9 +109,20 @@ cells = [
     SCENE = SCENE or sorted(available.scene.unique())[0]
     scene = available[available.scene.eq(SCENE)].sort_values(["view_order", "source"]).copy()
     assert len(scene) == 8 and pd.to_numeric(scene.view_order).astype(int).tolist() == list(range(8))
-    RUN_ROOT = OUTPUT_ROOT / DATASET / SCENE
-    RUN_ROOT.mkdir(parents=True, exist_ok=True)
-    print("Selected:", DATASET, SCENE)
+    dataset_name = {"3DRealCar": "3DRealCar", "IndustrialInventory": "Industrial"}[DATASET]
+    DATASET_VARIANT = dataset_name + ("_ref" if REFLECTION_HANDLED else "")
+    THREEDGS_EXPERIMENT = "VGGT_full_ref" if REFLECTION_HANDLED else "VGGT_full"
+    GEOMETRY_ROOT = EXPERIMENT_ROOT / "Geometry" / "VGGT" / DATASET_VARIANT / SCENE
+    SYNTHETIC_ROOT = EXPERIMENT_ROOT / "SyntheticViews" / "VGGT_NVS" / DATASET_VARIANT / SCENE
+    SYNTHETIC_EVALUATION_ROOT = SYNTHETIC_ROOT / "evaluation"
+    MESH_EVALUATION_ROOT = GEOMETRY_ROOT / "mesh_evaluation"
+    RUN_ROOT = EXPERIMENT_ROOT / "3DGS" / THREEDGS_EXPERIMENT / DATASET_VARIANT / SCENE
+    for directory in [GEOMETRY_ROOT, SYNTHETIC_EVALUATION_ROOT, MESH_EVALUATION_ROOT, RUN_ROOT]:
+        directory.mkdir(parents=True, exist_ok=True)
+    print("Selected:", DATASET_VARIANT, SCENE)
+    print("Geometry:", GEOMETRY_ROOT)
+    print("Synthetic views:", SYNTHETIC_ROOT)
+    print("3DGS:", RUN_ROOT)
     '''),
     md('''## 1. Verify inputs and masks'''),
     code(r'''
@@ -149,7 +161,7 @@ cells = [
     points_by_view = (unproject_depth_map_to_point_map(
         prediction["depth"], extrinsics, intrinsics
     ) if USE_DEPTH_UNPROJECTION else prediction["world_points"])
-    np.savez_compressed(RUN_ROOT / "vggt_geometry.npz", points=points_by_view,
+    np.savez_compressed(GEOMETRY_ROOT / "vggt_geometry.npz", points=points_by_view,
                        raw_confidence=raw_confidence, confidence=confidence,
                        extrinsics=extrinsics, intrinsics=intrinsics, masks=masks)
     print("VGGT size:", width, "x", height, "| geometry:", "depth-unprojected" if USE_DEPTH_UNPROJECTION else "direct point map")
@@ -193,7 +205,7 @@ cells = [
     print("Teacher surfels:", len(teacher["means"]), "| scene radius:", teacher["scene_radius"])
     cameras = interpolate_closed_orbit(extrinsics, intrinsics, views_between=VIEWS_BETWEEN)
     synthetic_views, coverage_rows = [], []
-    pseudo_root = RUN_ROOT / "pseudo_views"
+    pseudo_root = SYNTHETIC_ROOT
     for directory in [pseudo_root / "images", pseudo_root / "validity", pseudo_root / "confidence", pseudo_root / "alpha"]:
         directory.mkdir(parents=True, exist_ok=True)
     for index, camera in enumerate(cameras):
@@ -209,7 +221,7 @@ cells = [
         Image.fromarray(np.uint8(validity) * 255).save(pseudo_root / "validity" / f"view_{index:03d}.png")
         Image.fromarray(np.uint8(conf * 255)).save(pseudo_root / "confidence" / f"view_{index:03d}.png")
         Image.fromarray(np.uint8(alpha * 255)).save(pseudo_root / "alpha" / f"view_{index:03d}.png")
-    coverage = pd.DataFrame(coverage_rows); coverage.to_csv(RUN_ROOT / "pseudo_coverage.csv", index=False)
+    coverage = pd.DataFrame(coverage_rows); coverage.to_csv(SYNTHETIC_EVALUATION_ROOT / "coverage.csv", index=False)
     display(coverage.describe().round(3))
     '''),
     code(r'''
@@ -256,7 +268,7 @@ cells = [
         axes[0, target].axis("off"); axes[1, target].axis("off")
         del heldout_teacher; torch.cuda.empty_cache()
     plt.tight_layout(); plt.show()
-    reliability = pd.DataFrame(reliability_rows); reliability.to_csv(RUN_ROOT / "confidence_reliability.csv", index=False)
+    reliability = pd.DataFrame(reliability_rows); reliability.to_csv(SYNTHETIC_EVALUATION_ROOT / "reliability.csv", index=False)
     curve = reliability.groupby("bin").agg(confidence=("mean_confidence", "mean"), error=("mean_absolute_error", "mean"), pixels=("pixels", "sum"))
     display(curve)
     curve.plot(x="confidence", y="error", marker="o", title="Does greater confidence correspond to lower held-out RGB error?")
