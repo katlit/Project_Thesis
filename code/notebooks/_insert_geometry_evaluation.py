@@ -39,7 +39,7 @@ F_SCORE_THRESHOLDS_METRES = (0.01, 0.02, 0.05)
 
 finite = np.isfinite(points_by_view).all(axis=-1)
 confident = confidence >= POINT_CONFIDENCE_MIN
-retained = masks & finite & confident
+retained = geometry_keep
 density_rows = []
 for view_index in range(len(points_by_view)):
     foreground_count = int(masks[view_index].sum())
@@ -49,6 +49,7 @@ for view_index in range(len(points_by_view)):
         "image_pixels": int(masks[view_index].size),
         "foreground_pixels": foreground_count,
         "finite_foreground": int((masks[view_index] & finite[view_index]).sum()),
+        "median_view_support": float(np.median(support[view_index][masks[view_index]])),
         "retained_geometry": retained_count,
         "retained_%_of_foreground": 100 * retained_count / max(foreground_count, 1),
         "median_foreground_confidence": float(np.median(confidence[view_index][masks[view_index]])),
@@ -60,18 +61,13 @@ print(f"Retained geometry: {retained.sum():,} points; earlier plot displayed at 
 if DATASET != "3DRealCar":
     print("Reference-mesh evaluation skipped: IndustrialInventory has no supplied HQ200 mesh.")
 else:
-    source_path = Path(scene.source.iloc[0])
-    scene_root = next((parent for parent in [source_path.parent, *source_path.parents]
-                       if parent.name == SCENE), None)
-    preferred_names = ("textured_output.obj", "export_refined.obj", "export.obj")
-    mesh_path = next((scene_root / name for name in preferred_names
-                      if scene_root is not None and (scene_root / name).is_file()), None)
-    if mesh_path is None:
-        matches = [path for name in preferred_names
-                   for path in (PROJECT_ROOT / "data").rglob(name) if path.parent.name == SCENE]
-        mesh_path = matches[0] if matches else None
-    if mesh_path is None:
-        raise FileNotFoundError(f"No reference OBJ found for scene {SCENE}.")
+    mesh_path = PROJECT_ROOT / "data_processed/reference_meshes/3DRealCar" / SCENE / "car_reference.obj"
+    if not mesh_path.is_file():
+        raise FileNotFoundError(
+            f"Clean car reference missing: {mesh_path}\n"
+            "Run 04_hq200_reference_mesh_cleanup.ipynb and approve this scene first. "
+            "The raw textured_output.obj is deliberately not used because its background invalidates the metrics."
+        )
 
     reference_mesh = trimesh.load_mesh(mesh_path, force="mesh", process=False)
     if reference_mesh.is_empty or len(reference_mesh.faces) == 0:

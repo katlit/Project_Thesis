@@ -19,6 +19,45 @@ def confidence_to_unit_interval(confidence, foreground=None, low=5.0, high=95.0)
     return np.clip((confidence - lo) / max(float(hi - lo), 1e-8), 0.0, 1.0)
 
 
+def multiview_depth_support(point_maps, depths, extrinsics, intrinsics, foreground_masks,
+                            relative_tolerance=0.05, absolute_tolerance=0.01):
+    """Count views supporting each world point by mask and predicted depth."""
+    points = np.asarray(point_maps, dtype=np.float64)
+    depth = np.asarray(depths)
+    if depth.ndim == 4:
+        depth = depth.squeeze(-1)
+    masks = np.asarray(foreground_masks, dtype=bool)
+    views, height, width = masks.shape
+    support = masks.astype(np.uint8)
+    for source in range(views):
+        flat_points = points[source].reshape(-1, 3)
+        source_valid = masks[source].reshape(-1) & np.isfinite(flat_points).all(axis=1)
+        for target in range(views):
+            if target == source:
+                continue
+            camera = flat_points @ extrinsics[target, :3, :3].T + extrinsics[target, :3, 3]
+            z = camera[:, 2]
+            pixels = camera @ intrinsics[target].T
+            denominator = np.where(np.abs(pixels[:, 2]) > 1e-12, pixels[:, 2], 1e-12)
+            u = np.rint(pixels[:, 0] / denominator).astype(np.int64)
+            v = np.rint(pixels[:, 1] / denominator).astype(np.int64)
+            inside = source_valid & (z > 0) & (u >= 0) & (u < width) & (v >= 0) & (v < height)
+            indices = np.flatnonzero(inside)
+            if not len(indices):
+                continue
+            target_depth = depth[target, v[indices], u[indices]]
+            tolerance = absolute_tolerance + relative_tolerance * np.maximum(
+                np.abs(target_depth), np.abs(z[indices])
+            )
+            agreed = (
+                masks[target, v[indices], u[indices]]
+                & np.isfinite(target_depth)
+                & (np.abs(z[indices] - target_depth) <= tolerance)
+            )
+            support[source].reshape(-1)[indices[agreed]] += 1
+    return support
+
+
 def _as_homogeneous(extrinsic):
     matrix = np.eye(4, dtype=np.float64)
     matrix[:3, :4] = np.asarray(extrinsic, dtype=np.float64)

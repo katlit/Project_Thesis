@@ -64,7 +64,7 @@ cells = [
     '''),
     code(r'''
     from src.gaussian_full import initialize_full_gaussians, load_checkpoint, render_full, train_adaptive
-    from src.vggt_geometry import confidence_error_table, confidence_to_unit_interval, interpolate_closed_orbit
+    from src.vggt_geometry import confidence_error_table, confidence_to_unit_interval, interpolate_closed_orbit, multiview_depth_support
     from src.vggt_teacher import build_teacher_gaussians, coverage_summary, render_teacher
     from vggt.models.vggt import VGGT
     from vggt.utils.geometry import unproject_depth_map_to_point_map
@@ -85,6 +85,12 @@ cells = [
     USE_DEPTH_UNPROJECTION = True       # recommended; False uses direct world_points
     CONFIDENCE_PERCENTILES = (5.0, 95.0)
     POINT_CONFIDENCE_MIN = 0.05
+    COMPUTE_MULTIVIEW_SUPPORT = True
+    MIN_VIEW_SUPPORT = 1              # 1 preserves current behavior; inspect 2 and 3 in the sweep
+    DEPTH_RELATIVE_TOLERANCE = 0.05
+    DEPTH_ABSOLUTE_TOLERANCE = 0.01
+    TUNING_CONFIDENCE_THRESHOLDS = (0.00, 0.05, 0.10, 0.20, 0.40)
+    TUNING_MIN_VIEW_SUPPORT = (1, 2, 3)
 
     # ---------- dense pseudo-view teacher knobs ----------
     VIEWS_BETWEEN = 10                  # 10 => about 4.09 degrees for a 45-degree interval
@@ -161,15 +167,32 @@ cells = [
     points_by_view = (unproject_depth_map_to_point_map(
         prediction["depth"], extrinsics, intrinsics
     ) if USE_DEPTH_UNPROJECTION else prediction["world_points"])
+    support = (multiview_depth_support(
+        points_by_view, prediction["depth"], extrinsics, intrinsics, masks,
+        relative_tolerance=DEPTH_RELATIVE_TOLERANCE,
+        absolute_tolerance=DEPTH_ABSOLUTE_TOLERANCE,
+    ) if COMPUTE_MULTIVIEW_SUPPORT else masks.astype(np.uint8))
+    geometry_keep = (masks & np.isfinite(points_by_view).all(axis=-1) &
+                     (confidence >= POINT_CONFIDENCE_MIN) & (support >= MIN_VIEW_SUPPORT))
     np.savez_compressed(GEOMETRY_ROOT / "vggt_geometry.npz", points=points_by_view,
                        raw_confidence=raw_confidence, confidence=confidence,
-                       extrinsics=extrinsics, intrinsics=intrinsics, masks=masks)
+                       extrinsics=extrinsics, intrinsics=intrinsics, masks=masks, support=support)
     print("VGGT size:", width, "x", height, "| geometry:", "depth-unprojected" if USE_DEPTH_UNPROJECTION else "direct point map")
     del model, prediction_torch, images
     gc.collect(); torch.cuda.empty_cache()
     '''),
     code(r'''
-    keep = masks & np.isfinite(points_by_view).all(axis=-1) & (confidence >= POINT_CONFIDENCE_MIN)
+    tuning_rows = []
+    for threshold in TUNING_CONFIDENCE_THRESHOLDS:
+        for minimum_support in TUNING_MIN_VIEW_SUPPORT:
+            selected = masks & np.isfinite(points_by_view).all(axis=-1) & (confidence >= threshold) & (support >= minimum_support)
+            tuning_rows.append({"confidence_min": threshold, "minimum_view_support": minimum_support,
+                                "points": int(selected.sum()),
+                                "retained_%_of_foreground": 100 * selected.sum() / max(masks.sum(), 1)})
+    display(pd.DataFrame(tuning_rows).round(2))
+    print("Active geometry:", int(geometry_keep.sum()), "points | confidence >=", POINT_CONFIDENCE_MIN,
+          "| support >=", MIN_VIEW_SUPPORT)
+    keep = geometry_keep
     points, point_colors, point_conf = points_by_view[keep], colors[keep], confidence[keep]
     rng = np.random.default_rng(42)
     if len(points) > 25_000:
@@ -196,7 +219,7 @@ cells = [
     '''),
     md('''## 3. Dense Gaussian-surfel teacher and pseudo-views'''),
     code(r'''
-    teacher_keep = masks & (confidence >= POINT_CONFIDENCE_MIN) & np.isfinite(points_by_view).all(axis=-1)
+    teacher_keep = geometry_keep
     teacher = build_teacher_gaussians(
         points_by_view[teacher_keep], colors[teacher_keep], confidence[teacher_keep],
         max_points=TEACHER_MAX_POINTS, scale_divisor=TEACHER_SCALE_DIVISOR,
