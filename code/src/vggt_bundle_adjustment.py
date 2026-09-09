@@ -2,7 +2,6 @@
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 
 def _to_numpy(value):
@@ -11,19 +10,15 @@ def _to_numpy(value):
     return np.asarray(value)
 
 
-def _resize_tracker_field(value, size, channels_last=False):
-    """Resize a dense VGGT field for the square-only official tracker."""
+def _pad_tracker_field(value, padding, channels_last=False):
+    """Letterbox-pad a dense VGGT field without changing its aspect ratio."""
     array = _to_numpy(value)
-    tensor = torch.as_tensor(array, dtype=torch.float32)
+    left, right, top, bottom = padding
     if channels_last:
-        tensor = tensor.permute(0, 3, 1, 2)
-    elif tensor.ndim == 3:
-        tensor = tensor[:, None]
-    resized = F.interpolate(tensor, size=(size, size), mode="bilinear", align_corners=False)
-    if channels_last:
-        return resized.permute(0, 2, 3, 1).cpu().numpy()
-    resized = resized.cpu().numpy()
-    return resized[:, 0] if array.ndim == 3 else resized
+        return np.pad(array, ((0, 0), (top, bottom), (left, right), (0, 0)))
+    if array.ndim == 3:
+        return np.pad(array, ((0, 0), (top, bottom), (left, right)))
+    return np.pad(array, ((0, 0), (0, 0), (top, bottom), (left, right)))
 
 
 def _foreground_track_mask(tracks, visibility, masks, visibility_threshold):
@@ -134,7 +129,8 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
                                visibility_threshold=0.2, max_query_points=4096,
                                query_frame_count=8, fine_tracking=True,
                                shared_camera=False, refine_focal_length=True,
-                               refine_principal_point=False):
+                               refine_principal_point=False,
+                               max_camera_center_drift=0.25):
     """Build VGGT tracks, run one global BA, and return refined cameras.
 
     This follows the official VGGT ``demo_colmap.py`` path. Dense depth is not
@@ -147,18 +143,19 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
     tracker_images = images
     tracker_confidence = depth_confidence
     tracker_points = point_maps
-    scale_x = scale_y = 1.0
+    pad_left = pad_top = 0
     if original_height != original_width:
-        # VGGT's optional predict_tracks path currently asserts H == W. Resize
-        # only its tracking inputs, then return tracks to original coordinates.
+        # The optional tracker asserts H == W. Symmetric letterboxing preserves
+        # object shape; anisotropic resizing corrupts feature geometry.
         tracker_size = max(original_height, original_width)
-        tracker_images = F.interpolate(
-            images, size=(tracker_size, tracker_size), mode="bilinear", align_corners=False
-        )
-        tracker_confidence = _resize_tracker_field(depth_confidence, tracker_size)
-        tracker_points = _resize_tracker_field(point_maps, tracker_size, channels_last=True)
-        scale_x = tracker_size / original_width
-        scale_y = tracker_size / original_height
+        pad_left = (tracker_size - original_width) // 2
+        pad_right = tracker_size - original_width - pad_left
+        pad_top = (tracker_size - original_height) // 2
+        pad_bottom = tracker_size - original_height - pad_top
+        padding = (pad_left, pad_right, pad_top, pad_bottom)
+        tracker_images = torch.nn.functional.pad(images, padding, value=1.0)
+        tracker_confidence = _pad_tracker_field(depth_confidence, padding)
+        tracker_points = _pad_tracker_field(point_maps, padding, channels_last=True)
 
     dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     with torch.inference_mode(), torch.amp.autocast("cuda", dtype=dtype):
@@ -169,8 +166,8 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
             keypoint_extractor="aliked+sp", fine_tracking=fine_tracking,
         )
     tracks = _to_numpy(tracks)
-    tracks[..., 0] /= scale_x
-    tracks[..., 1] /= scale_y
+    tracks[..., 0] -= pad_left
+    tracks[..., 1] -= pad_top
     tracked_points = _to_numpy(tracked_points)
     tracked_rgb = _to_numpy(tracked_rgb) if tracked_rgb is not None else None
     track_mask = _foreground_track_mask(tracks, visibility, masks, visibility_threshold)
@@ -198,10 +195,29 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
         refined_intrinsics.append(_camera_matrix(reconstruction.cameras[image.camera_id]))
     if len(refined_extrinsics) != len(extrinsics):
         raise RuntimeError(f"BA registered {len(refined_extrinsics)}/{len(extrinsics)} cameras.")
+    refined_extrinsics = np.stack(refined_extrinsics)
+    before_centers = np.linalg.inv(np.concatenate([
+        np.asarray(extrinsics), np.tile([[[0, 0, 0, 1]]], (len(extrinsics), 1, 1))
+    ], axis=1))[:, :3, 3]
+    after_centers = np.linalg.inv(np.concatenate([
+        refined_extrinsics, np.tile([[[0, 0, 0, 1]]], (len(extrinsics), 1, 1))
+    ], axis=1))[:, :3, 3]
+    orbit_radius = max(float(np.median(np.linalg.norm(
+        before_centers - np.median(before_centers, axis=0), axis=1
+    ))), 1e-8)
+    relative_center_drift = float(np.max(
+        np.linalg.norm(after_centers - before_centers, axis=1)
+    ) / orbit_radius)
+    if relative_center_drift > max_camera_center_drift:
+        raise RuntimeError(
+            f"Rejected unstable BA: maximum camera-center drift is "
+            f"{relative_center_drift:.3f} orbit radii (limit {max_camera_center_drift:.3f})."
+        )
     diagnostics = {
         "registered_cameras": len(refined_extrinsics),
         "tracker_square_size": int(max(original_height, original_width)),
-        "tracker_resized_from_non_square": bool(original_height != original_width),
+        "tracker_letterboxed_from_non_square": bool(original_height != original_width),
+        "maximum_camera_center_drift_orbit_radii": relative_center_drift,
         "candidate_tracks": int(track_mask.shape[1]),
         "valid_observations": int(track_mask.sum()),
         "valid_tracks": int(np.asarray(valid_track_mask).sum()),
@@ -209,5 +225,5 @@ def run_vggt_bundle_adjustment(images, depth_confidence, point_maps, colors, mas
         "mean_reprojection_error_after_px": float(after),
         "summary": str(summary),
     }
-    return (np.stack(refined_extrinsics), np.stack(refined_intrinsics),
+    return (refined_extrinsics, np.stack(refined_intrinsics),
             reconstruction, diagnostics)
