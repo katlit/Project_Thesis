@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-path = Path(__file__).with_name("05_vggt_dense_pseudoview_adaptive_3dgs.ipynb")
+path = Path(__file__).with_name("05_VGGT_full.ipynb")
 notebook = json.loads(path.read_text(encoding="utf-8"))
 
 first = notebook["cells"][1]

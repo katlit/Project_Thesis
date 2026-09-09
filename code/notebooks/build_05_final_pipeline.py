@@ -23,16 +23,17 @@ cells = [
 
     1. verify and visualize the eight real inputs and BiRefNet masks;
     2. run VGGT once and visualize cameras, depth-based 3D points, and confidence;
-    3. construct a frozen Gaussian-surfel teacher from foreground VGGT geometry;
-    4. render ten dense pseudo-views between each adjacent pair, with continuous confidence and binary validity;
-    5. diagnose pseudo-pixel reliability by reconstructing each real view without its own source points;
-    6. train adaptive 3DGS using **real + confidence-weighted synthetic supervision only**;
-    7. visualize real fits, pseudo-view fits, training curves, and a rotational MP4.
+    3. optionally refine VGGT cameras and sparse tracks with bundle adjustment;
+    4. construct a frozen Gaussian-surfel teacher from foreground VGGT geometry;
+    5. render ten dense pseudo-views between each adjacent pair, with continuous confidence and binary validity;
+    6. diagnose pseudo-pixel reliability by reconstructing each real view without its own source points;
+    7. train adaptive 3DGS using **real + confidence-weighted synthetic supervision only**;
+    8. visualize real fits, pseudo-view fits, training curves, and a rotational MP4.
 
     The public VGGT model does not contain the paper's unreleased learned RGB-NVS head. Here “pseudo-view” means a dense VGGT-geometry teacher render. VGGT's official implementation notes that unprojecting predicted depth with predicted cameras usually gives more accurate points than the direct point-map branch, so that is the default.
     '''),
     code(r'''
-    %pip -q install scipy pandas pillow matplotlib huggingface_hub einops safetensors opencv-python imageio imageio-ffmpeg "gsplat==1.3.0"
+    %pip -q install scipy trimesh pandas pillow matplotlib huggingface_hub einops safetensors opencv-python imageio imageio-ffmpeg pycolmap hydra-core omegaconf onnxruntime requests "gsplat==1.3.0"
     !test -d /content/vggt/.git || git clone -q https://github.com/facebookresearch/vggt.git /content/vggt
     %pip -q install --no-deps -e /content/vggt
     '''),
@@ -66,6 +67,7 @@ cells = [
     from src.gaussian_full import initialize_full_gaussians, load_checkpoint, render_full, train_adaptive
     from src.vggt_geometry import confidence_error_table, confidence_to_unit_interval, interpolate_closed_orbit, multiview_depth_support
     from src.vggt_teacher import build_teacher_gaussians, coverage_summary, render_teacher
+    from src.vggt_bundle_adjustment import run_vggt_bundle_adjustment
     from vggt.models.vggt import VGGT
     from vggt.utils.geometry import unproject_depth_map_to_point_map
     from vggt.utils.load_fn import load_and_preprocess_images
@@ -92,6 +94,18 @@ cells = [
     TUNING_CONFIDENCE_THRESHOLDS = (0.00, 0.05, 0.10, 0.20, 0.40)
     TUNING_MIN_VIEW_SUPPORT = (1, 2, 3)
 
+    # ---------- optional VGGT point-track bundle adjustment ----------
+    USE_BUNDLE_ADJUSTMENT = False
+    BA_ALLOW_FALLBACK = True
+    BA_MAX_REPROJECTION_ERROR = 8.0
+    BA_VISIBILITY_THRESHOLD = 0.20
+    BA_MAX_QUERY_POINTS = 4096
+    BA_QUERY_FRAME_COUNT = 8
+    BA_FINE_TRACKING = True
+    BA_SHARED_CAMERA = False
+    BA_REFINE_FOCAL_LENGTH = True
+    BA_REFINE_PRINCIPAL_POINT = False
+
     # ---------- dense pseudo-view teacher knobs ----------
     VIEWS_BETWEEN = 10                  # 10 => about 4.09 degrees for a 45-degree interval
     TEACHER_MAX_POINTS = 150_000
@@ -117,9 +131,11 @@ cells = [
     assert len(scene) == 8 and pd.to_numeric(scene.view_order).astype(int).tolist() == list(range(8))
     dataset_name = {"3DRealCar": "3DRealCar", "IndustrialInventory": "Industrial"}[DATASET]
     DATASET_VARIANT = dataset_name + ("_ref" if REFLECTION_HANDLED else "")
-    THREEDGS_EXPERIMENT = "VGGT_full_ref" if REFLECTION_HANDLED else "VGGT_full"
-    GEOMETRY_ROOT = EXPERIMENT_ROOT / "Geometry" / "VGGT" / DATASET_VARIANT / SCENE
-    SYNTHETIC_ROOT = EXPERIMENT_ROOT / "SyntheticViews" / "VGGT_NVS" / DATASET_VARIANT / SCENE
+    geometry_method = "VGGT_BA" if USE_BUNDLE_ADJUSTMENT else "VGGT"
+    synthetic_method = "VGGT_NVS_BA" if USE_BUNDLE_ADJUSTMENT else "VGGT_NVS"
+    THREEDGS_EXPERIMENT = geometry_method + ("_full_ref" if REFLECTION_HANDLED else "_full")
+    GEOMETRY_ROOT = EXPERIMENT_ROOT / "Geometry" / geometry_method / DATASET_VARIANT / SCENE
+    SYNTHETIC_ROOT = EXPERIMENT_ROOT / "SyntheticViews" / synthetic_method / DATASET_VARIANT / SCENE
     SYNTHETIC_EVALUATION_ROOT = SYNTHETIC_ROOT / "evaluation"
     MESH_EVALUATION_ROOT = GEOMETRY_ROOT / "mesh_evaluation"
     RUN_ROOT = EXPERIMENT_ROOT / "3DGS" / THREEDGS_EXPERIMENT / DATASET_VARIANT / SCENE
@@ -167,6 +183,46 @@ cells = [
     points_by_view = (unproject_depth_map_to_point_map(
         prediction["depth"], extrinsics, intrinsics
     ) if USE_DEPTH_UNPROJECTION else prediction["world_points"])
+    feedforward_extrinsics, feedforward_intrinsics = extrinsics.copy(), intrinsics.copy()
+    ba_diagnostics = {"enabled": USE_BUNDLE_ADJUSTMENT, "used": False}
+    if USE_BUNDLE_ADJUSTMENT:
+        try:
+            extrinsics, intrinsics, reconstruction, ba_report = run_vggt_bundle_adjustment(
+                images, raw_confidence, points_by_view, colors, masks, extrinsics, intrinsics,
+                max_reprojection_error=BA_MAX_REPROJECTION_ERROR,
+                visibility_threshold=BA_VISIBILITY_THRESHOLD,
+                max_query_points=BA_MAX_QUERY_POINTS, query_frame_count=BA_QUERY_FRAME_COUNT,
+                fine_tracking=BA_FINE_TRACKING, shared_camera=BA_SHARED_CAMERA,
+                refine_focal_length=BA_REFINE_FOCAL_LENGTH,
+                refine_principal_point=BA_REFINE_PRINCIPAL_POINT,
+            )
+            points_by_view = unproject_depth_map_to_point_map(prediction["depth"], extrinsics, intrinsics)
+            sparse_root = GEOMETRY_ROOT / "colmap" / "sparse"
+            sparse_root.mkdir(parents=True, exist_ok=True); reconstruction.write(str(sparse_root))
+            ba_diagnostics = {"enabled": True, "used": True, **ba_report}
+        except Exception as error:
+            ba_diagnostics = {"enabled": True, "used": False, "error": repr(error)}
+            if not BA_ALLOW_FALLBACK:
+                raise
+            extrinsics, intrinsics = feedforward_extrinsics, feedforward_intrinsics
+            points_by_view = (unproject_depth_map_to_point_map(prediction["depth"], extrinsics, intrinsics)
+                              if USE_DEPTH_UNPROJECTION else prediction["world_points"])
+            print("WARNING: BA failed; continuing with feed-forward VGGT:", error)
+    pd.DataFrame([ba_diagnostics]).to_csv(GEOMETRY_ROOT / "bundle_adjustment.csv", index=False)
+    display(pd.DataFrame([ba_diagnostics]))
+    if ba_diagnostics["used"]:
+        def camera_centers(values):
+            homogeneous = np.concatenate([values, np.tile([[[0, 0, 0, 1]]], (len(values), 1, 1))], axis=1)
+            return np.linalg.inv(homogeneous)[:, :3, 3]
+        before_centers, after_centers = camera_centers(feedforward_extrinsics), camera_centers(extrinsics)
+        figure = plt.figure(figsize=(8, 7)); axis = figure.add_subplot(111, projection="3d")
+        for centers_to_plot, label, color in [(before_centers, "VGGT", "tab:gray"),
+                                               (after_centers, "VGGT + BA", "tab:blue")]:
+            closed = np.vstack([centers_to_plot, centers_to_plot[0]])
+            axis.plot(*closed.T, "o-", label=label, color=color)
+        axis.set_title("Camera orbit before and after bundle adjustment")
+        axis.legend(); axis.set_box_aspect(np.ptp(np.vstack([before_centers, after_centers]), axis=0).clip(min=1e-6))
+        plt.show()
     support = (multiview_depth_support(
         points_by_view, prediction["depth"], extrinsics, intrinsics, masks,
         relative_tolerance=DEPTH_RELATIVE_TOLERANCE,
@@ -398,10 +454,10 @@ notebook = {
                  "language_info": {"name": "python", "version": "3"}},
     "nbformat": 4, "nbformat_minor": 5,
 }
-(HERE / "05_vggt_dense_pseudoview_adaptive_3dgs.ipynb").write_text(
+(HERE / "05_VGGT_full.ipynb").write_text(
     json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
 )
-print("Built 05_vggt_dense_pseudoview_adaptive_3dgs.ipynb")
+print("Built 05_VGGT_full.ipynb")
 
 # Keep the reference-mesh evaluation in regenerated copies while preserving
 # the insertion logic separately from the already large notebook builder.

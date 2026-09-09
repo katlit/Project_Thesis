@@ -17,11 +17,15 @@ Geometry methods currently include `VGGT` and later `MASt3R`. Synthetic-view
 methods include `VGGT_NVS` and later `Backprojection`. Synthetic-view metrics
 belong in an `evaluation/` directory below the corresponding synthetic-view
 scene. HQ200 mesh comparison belongs in `Geometry/VGGT/.../mesh_evaluation/`.
+Optional VGGT bundle adjustment uses `VGGT_BA`, `VGGT_NVS_BA`, and the matching
+`VGGT_BA_full` 3DGS name so baseline and refined runs never overwrite each other.
 
 Current 3DGS experiment names are:
 
 - `VGGT_full`
 - `VGGT_full_ref`
+- `VGGT_BA_full`
+- `VGGT_BA_full_ref`
 - `VGGT_backprojection`
 - `VGGT_backprojection_ref`
 
