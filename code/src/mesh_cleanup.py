@@ -7,7 +7,9 @@ import trimesh
 
 
 def load_triangle_mesh(path):
-    mesh = trimesh.load_mesh(Path(path), force="mesh", process=False)
+    # Geometry-only loading avoids decoding the large texture atlas during crop
+    # selection; texture is irrelevant to the reference-distance metrics.
+    mesh = trimesh.load_mesh(Path(path), force="mesh", process=False, skip_materials=True)
     if mesh.is_empty or len(mesh.faces) == 0:
         raise ValueError(f"Empty triangle mesh: {path}")
     return mesh
@@ -31,7 +33,7 @@ def normalized_to_absolute_box(mesh, normalized_box):
     return mesh.bounds[0, :, None] + box * (mesh.bounds[1] - mesh.bounds[0])[:, None]
 
 
-def crop_mesh(mesh, normalized_box, minimum_component_faces=500):
+def crop_mesh(mesh, normalized_box, minimum_component_faces=None):
     """Keep faces whose centroids are inside a normalized XYZ box."""
     bounds = normalized_to_absolute_box(mesh, normalized_box)
     centers = mesh.triangles_center
@@ -39,9 +41,14 @@ def crop_mesh(mesh, normalized_box, minimum_component_faces=500):
     if not np.any(keep):
         raise ValueError("Crop box contains no mesh faces.")
     cropped = mesh.submesh([keep], append=True, repair=False)
-    components = [part for part in cropped.split(only_watertight=False)
-                  if len(part.faces) >= minimum_component_faces]
-    return trimesh.util.concatenate(components) if components else cropped
+    # Splitting a noisy scanner mesh into every connected component is very
+    # memory-intensive. Keep it opt-in and never do it in interactive preview.
+    if minimum_component_faces is not None:
+        components = [part for part in cropped.split(only_watertight=False)
+                      if len(part.faces) >= minimum_component_faces]
+        if components:
+            cropped = trimesh.util.concatenate(components)
+    return cropped
 
 
 def component_table(mesh, minimum_faces=50):

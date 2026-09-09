@@ -27,7 +27,7 @@ cells = [
     %pip -q install trimesh scipy pandas matplotlib ipywidgets
     '''),
     code('''
-    import json, shutil, subprocess, sys
+    import gc, json, shutil, subprocess, sys
     from pathlib import Path
     import ipywidgets as widgets
     import matplotlib.pyplot as plt
@@ -63,7 +63,12 @@ cells = [
     mesh_paths = {path.parent.name: path for path in HQ200_ROOT.glob("*/textured_output.obj")}
     if not mesh_paths: raise FileNotFoundError(f"No textured_output.obj files below {HQ200_ROOT}")
     scenes = sorted(mesh_paths)
-    rows = [mesh_summary(load_triangle_mesh(path), scene, path) for scene, path in mesh_paths.items()]
+    rows = []
+    for scene, path in mesh_paths.items():
+        inspected_mesh = load_triangle_mesh(path)
+        rows.append(mesh_summary(inspected_mesh, scene, path))
+        del inspected_mesh
+        gc.collect()
     display(pd.DataFrame(rows).sort_values("scene").round(3))
     print("Scenes:", len(scenes), "| raw meshes are read-only")
     '''),
@@ -100,8 +105,8 @@ cells = [
             try: cropped = crop_mesh(original, current_box())
             except Exception as error:
                 print("Invalid crop:", error); return
-            original_points = sample_for_display(original, 15_000)
-            cropped_points = sample_for_display(cropped, 20_000)
+            original_points = sample_for_display(original, 5_000)
+            cropped_points = sample_for_display(cropped, 8_000)
             fig = plt.figure(figsize=(18, 8))
             for index, (points, title, azimuth) in enumerate([
                 (original_points, "Original mesh including background", -65),
@@ -112,8 +117,10 @@ cells = [
                 axis.scatter(*points.T, s=.15, c="0.25")
                 axis.set_title(title); axis.set_box_aspect(np.ptp(points, axis=0).clip(min=1e-6))
                 axis.view_init(18, azimuth)
-            plt.tight_layout(); plt.show()
+            plt.tight_layout(); plt.show(); plt.close(fig)
             display(pd.DataFrame([mesh_summary(cropped, scene)]).round(3))
+            del original, cropped, original_points, cropped_points
+            gc.collect()
 
     def approve(_):
         scene = scene_widget.value
@@ -124,6 +131,8 @@ cells = [
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps(saved, indent=2))
         with output: print("Approved and saved:", scene, "→", CONFIG_PATH)
+        del original, cropped
+        gc.collect()
 
     scene_widget.observe(load_saved_box, names="value")
     preview_button.on_click(show_preview); approve_button.on_click(approve)
@@ -155,6 +164,8 @@ cells = [
             destination = OUTPUT_ROOT / scene / "car_reference.obj"
             export_clean_reference(cleaned, destination, overwrite=OVERWRITE)
             export_rows.append(mesh_summary(cleaned, scene, destination))
+            del original, cleaned
+            gc.collect()
         manifest = pd.DataFrame(export_rows)
         manifest.to_csv(OUTPUT_ROOT / "manifest.csv", index=False)
         display(manifest.round(3)); print("Saved:", OUTPUT_ROOT)
