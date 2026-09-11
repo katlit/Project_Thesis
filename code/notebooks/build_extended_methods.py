@@ -398,7 +398,7 @@ if RUN_INSTALL:
         # Build only that small CUDA extension and keep verbose compiler output.
         run([
             city_python, "-m", "pip", "install", "-v", "--no-build-isolation",
-            CITY_ROOT / "submodules/simple-knn",
+            "git+https://github.com/yzslab/simple-knn.git@44f764299fa305faf6ec5ebd99939e0508331503",
         ], cwd=CITY_ROOT)
         run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
         city_ready.write_text("ok\n", encoding="utf-8")
