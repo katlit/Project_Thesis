@@ -319,8 +319,12 @@ if RUN_INSTALL:
         run(["git", "-C", CITY_ROOT, "pull", "--ff-only"])
         run(["git", "-C", CITY_ROOT, "submodule", "update", "--init", "--recursive"])
 
-    run(["uv", "venv", "--python", "3.10", VGGT_ENV])
-    run(["uv", "pip", "install", "--python", VGGT_ENV / "bin/python", "-r", VGGT_X_ROOT / "requirements.txt"])
+    vggt_python = VGGT_ENV / "bin/python"
+    if not vggt_python.is_file():
+        run(["uv", "venv", "--clear", "--python", "3.10", "--seed", VGGT_ENV])
+    else:
+        print("Reusing existing VGGT-X environment:", VGGT_ENV)
+    run(["uv", "pip", "install", "--python", vggt_python, "-r", VGGT_X_ROOT / "requirements.txt"])
 
     # Clear the incomplete environment left by an earlier failed installation.
     run(["uv", "venv", "--clear", "--python", "3.9", "--seed", CITY_ENV])
