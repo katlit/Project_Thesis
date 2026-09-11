@@ -47,7 +47,18 @@ This notebook tests learned Plucker-ray NVS. LagerNVS generates dense RGB views.
 Run notebook 05 first because this notebook loads its `vggt_geometry.npz`. The LagerNVS checkpoint is gated; request access on Hugging Face and provide a token when prompted.'''),
     code(r'''# Use LagerNVS's official dependency file. It includes xformers, which
 # is required while importing the renderer attention blocks.
-!test -d /content/lagernvs/.git || git clone -q https://github.com/facebookresearch/lagernvs.git /content/lagernvs
+import subprocess
+from pathlib import Path
+
+LAGERNVS_ROOT = Path("/content/lagernvs")
+if (LAGERNVS_ROOT / ".git").is_dir():
+    subprocess.run(["git", "-C", str(LAGERNVS_ROOT), "pull", "--ff-only"], check=True)
+else:
+    subprocess.run([
+        "git", "clone", "-q",
+        "https://github.com/facebookresearch/lagernvs.git",
+        str(LAGERNVS_ROOT),
+    ], check=True)
 %pip -q install --index-url https://download.pytorch.org/whl/cu126 "torch==2.8.0" "torchvision==0.23.0" "torchaudio==2.8.0"
 %pip -q install -r /content/lagernvs/requirements.txt "gsplat==1.3.0" matplotlib imageio imageio-ffmpeg
 
