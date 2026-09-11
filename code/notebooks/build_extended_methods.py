@@ -227,43 +227,243 @@ print(video_path); display(Video(str(video_path), embed=True, html_attributes="c
 
 
 save("07_VGGT_X_MCMC_3DGS.ipynb", [
-    md('''# 07 - Official VGGT-X and MCMC-3DGS baseline
+    md('''# 07 - VGGT-X MCMC-3DGS
 
-This notebook is an isolated baseline. It does not reuse our custom Gaussian trainer. It runs the released VGGT-X global-alignment export, then the CityGaussian MCMC-3DGS configuration recommended by the authors.
+This notebook runs the official baseline from beginning to end:
 
-VGGT-X was designed for dense image collections. Using the same eight images is intentional here: it makes the comparison fair, but it is a sparse-input stress test.'''),
-    md('''## Important environment note
+1. copy the same eight selected images used by the other experiments;
+2. run VGGT-X with global alignment and export COLMAP geometry;
+3. inspect the registered cameras and sparse points;
+4. train CityGaussian with its MCMC-3DGS pose-optimization configuration;
+5. evaluate the eight real views;
+6. save a closed-orbit video and individual frames for notebook 08.
 
-VGGT-X pins Python 3.10-era Torch 2.3.1 and PyCOLMAP 3.10.0. Do not install it into the notebook 05/06 runtime. Use a fresh runtime and follow the official environment installation below. If Colab cannot build the CUDA extensions, run this notebook on a Linux CUDA machine.'''),
+VGGT-X was designed for dense image collections. Eight images are used here for a fair sparse-view comparison, so a failure is also a meaningful experimental result.'''),
+    md('''## Important environment design
+
+The active Colab kernel is not modified. `uv` creates two isolated environments because the official projects require different Python and Torch versions. Installation can take several minutes and compile CUDA extensions. Start from a fresh GPU runtime.'''),
     code(common_setup + r'''
+import json, os, shutil, subprocess, textwrap
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from PIL import Image
-DATASET="3DRealCar"; SCENE=None
-manifest=pd.read_csv(PROJECT_ROOT/"data_processed/method_inputs/manifest.csv")
-rows=manifest.query("method == 'vggt' and split == 'train' and dataset == @DATASET")
-SCENE=SCENE or sorted(rows.scene.unique())[0]; rows=rows[rows.scene.eq(SCENE)].sort_values("view_order")
-STAGE=Path("/content/vggtx_input")/SCENE; (STAGE/"images").mkdir(parents=True,exist_ok=True)
-for i,row in enumerate(rows.itertuples()):
-    Image.open(row.method_image).convert("RGB").save(STAGE/"images"/f"{i:02d}.png")
-print("Staged",len(rows),"images at",STAGE)'''),
-    code(r'''# Run these commands in the dedicated Python 3.10 environment described by VGGT-X.
-!test -d /content/VGGT-X/.git || git clone --recursive https://github.com/Linketic/VGGT-X.git /content/VGGT-X
-print("Official geometry command:")
-print(f"python /content/VGGT-X/demo_colmap.py --scene_dir {STAGE} --shared_camera --use_ga --total_frame_num 8")'''),
-    md('''## Run the official commands
+from IPython.display import Video, display
 
-The first command must create a valid COLMAP model and `matches.pt`. Inspect the camera orbit before training. If global alignment destroys the orbit, report the failure rather than silently using it.
+if subprocess.run(["nvidia-smi"], capture_output=True).returncode != 0:
+    raise RuntimeError("Connect a GPU runtime before running notebook 07.")
 
-After that, follow the official CityGaussian `configs/colmap_pose_opt_mcmc.yaml` command. Save its rendered orbit and metrics under:
+DATASET = "3DRealCar"
+SCENE = None
+FRAMES_BETWEEN = 10
+MAX_GAUSSIANS = 300_000
+DOWN_SAMPLE_FACTOR = 1
+RUN_INSTALL = True
+RUN_VGGT_X = True
+RUN_TRAINING = True
+RUN_EVALUATION = True
+RUN_ORBIT_RENDER = True
 
-`experiments/3DGS/VGGT_X_MCMC/3DRealCar/<scene>/`
+manifest = pd.read_csv(PROJECT_ROOT / "data_processed/method_inputs/manifest.csv")
+rows = manifest.query("method == 'vggt' and split == 'train' and dataset == @DATASET").copy()
+SCENE = SCENE or sorted(rows.scene.unique())[0]
+rows = rows[rows.scene.eq(SCENE)].sort_values(["view_order", "source"])
+assert len(rows) == 8, f"Expected eight selected images, found {len(rows)}"
 
-This notebook deliberately does not imitate VGGT-X with our trainer. A valid baseline must come from the released VGGT-X and CityGaussian implementations.'''),
-    code(r'''OUTPUT_ROOT=PROJECT_ROOT/"experiments/3DGS/VGGT_X_MCMC"/DATASET/SCENE
-OUTPUT_ROOT.mkdir(parents=True,exist_ok=True)
-print("Expected final video:",OUTPUT_ROOT/"closed_orbit.mp4")
-print("Expected synchronized frames:",OUTPUT_ROOT/"orbit_frames/view_000.png ...")
-print("Expected metrics:",OUTPUT_ROOT/"metrics.csv")'''),
+STAGE = Path("/content/vggtx_data") / SCENE
+VGGT_X_OUTPUT = STAGE.parent / f"{SCENE}_vggt_x"
+FINAL_ROOT = PROJECT_ROOT / "experiments/3DGS/VGGT_X_MCMC" / DATASET / SCENE
+FINAL_ROOT.mkdir(parents=True, exist_ok=True)
+print("Scene:", SCENE)
+print("Final Drive folder:", FINAL_ROOT)'''),
+    md('''## 1. Install the official projects
+
+The installation uses the repositories' own requirement files. If CUDA compilation fails, keep the error: do not silently replace the official renderer with our implementation.'''),
+    code(r'''%pip -q install uv
+
+VGGT_X_ROOT = Path("/content/VGGT-X")
+CITY_ROOT = Path("/content/CityGaussian")
+VGGT_ENV = Path("/content/envs/vggt_x")
+CITY_ENV = Path("/content/envs/citygaussian")
+
+def run(command, cwd=None, env=None):
+    print("RUN:", " ".join(map(str, command)))
+    subprocess.run([str(item) for item in command], cwd=cwd, env=env, check=True)
+
+if RUN_INSTALL:
+    if not (VGGT_X_ROOT / ".git").is_dir():
+        run(["git", "clone", "--recursive", "https://github.com/Linketic/VGGT-X.git", VGGT_X_ROOT])
+    else:
+        run(["git", "-C", VGGT_X_ROOT, "pull", "--ff-only"])
+        run(["git", "-C", VGGT_X_ROOT, "submodule", "update", "--init", "--recursive"])
+
+    if not (CITY_ROOT / ".git").is_dir():
+        run(["git", "clone", "--recursive", "https://github.com/Linketic/CityGaussian.git", CITY_ROOT])
+    else:
+        run(["git", "-C", CITY_ROOT, "pull", "--ff-only"])
+        run(["git", "-C", CITY_ROOT, "submodule", "update", "--init", "--recursive"])
+
+    run(["uv", "venv", "--python", "3.10", VGGT_ENV])
+    run(["uv", "pip", "install", "--python", VGGT_ENV / "bin/python", "-r", VGGT_X_ROOT / "requirements.txt"])
+
+    run(["uv", "venv", "--python", "3.9", CITY_ENV])
+    city_python = CITY_ENV / "bin/python"
+    run(["uv", "pip", "install", "--python", city_python, "-r", CITY_ROOT / "requirements/pyt201_cu118.txt"])
+    run(["uv", "pip", "install", "--python", city_python, "-r", CITY_ROOT / "requirements.txt"])
+    run(["uv", "pip", "install", "--python", city_python, "-r", CITY_ROOT / "requirements/gsplat.txt"])
+
+print("VGGT-X Python:", VGGT_ENV / "bin/python")
+print("CityGaussian Python:", CITY_ENV / "bin/python")'''),
+    md('''## 2. Stage and verify the eight inputs
+
+Only the annotated training selections are copied. Numeric filenames preserve canonical rotational order.'''),
+    code(r'''if STAGE.exists():
+    shutil.rmtree(STAGE)
+(STAGE / "images").mkdir(parents=True)
+fig, axes = plt.subplots(1, 8, figsize=(24, 3))
+for index, row in enumerate(rows.itertuples(index=False)):
+    image = Image.open(row.method_image).convert("RGB")
+    image.save(STAGE / "images" / f"{index:02d}.png")
+    axes[index].imshow(image); axes[index].set_title(f"view {int(row.view_order)}"); axes[index].axis("off")
+plt.tight_layout(); plt.show()
+print("Staged:", STAGE)'''),
+    md('''## 3. Run VGGT-X global alignment
+
+This creates the `_vggt_x` folder containing images, COLMAP cameras, points, and `matches.pt`. The geometry must register all eight images before 3DGS training starts.'''),
+    code(r'''if RUN_VGGT_X:
+    run([
+        VGGT_ENV / "bin/python", VGGT_X_ROOT / "demo_colmap.py",
+        "--scene_dir", STAGE,
+        "--shared_camera", "--use_ga", "--save_depth",
+        "--total_frame_num", "8",
+    ], cwd=VGGT_X_ROOT)
+
+sparse_candidates = [VGGT_X_OUTPUT / "sparse/0", VGGT_X_OUTPUT / "sparse"]
+SPARSE = next((path for path in sparse_candidates if (path / "cameras.bin").is_file()), None)
+if SPARSE is None:
+    raise FileNotFoundError(f"VGGT-X did not create a COLMAP model under {VGGT_X_OUTPUT}")
+print("COLMAP model:", SPARSE)'''),
+    md('''## 4. Inspect geometry before training
+
+This cell reads the official COLMAP result inside the VGGT-X environment and saves a small diagnostic file. The notebook then plots camera centers and a sampled point cloud.'''),
+    code(r'''INSPECT_SCRIPT = Path("/content/inspect_vggtx.py")
+INSPECT_SCRIPT.write_text(textwrap.dedent(f"""
+import numpy as np, pycolmap
+r = pycolmap.Reconstruction(r'{SPARSE}')
+images = sorted(r.images.values(), key=lambda x: x.name)
+centers = []
+for image in images:
+    value = image.cam_from_world
+    pose = value() if callable(value) else value
+    centers.append(np.asarray(pose.inverse().translation))
+points = np.asarray([point.xyz for point in r.points3D.values()])
+colors = np.asarray([point.color for point in r.points3D.values()]) / 255.0
+np.savez(r'/content/vggtx_inspection.npz', centers=centers, points=points, colors=colors,
+         registered=len(images), cameras=len(r.cameras))
+"""), encoding="utf-8")
+run([VGGT_ENV / "bin/python", INSPECT_SCRIPT])
+inspection = np.load("/content/vggtx_inspection.npz")
+print("Registered images:", int(inspection["registered"]), "/ 8")
+if int(inspection["registered"]) != 8:
+    raise RuntimeError("Stop: VGGT-X did not register every selected input.")
+
+centers, points, point_colors = inspection["centers"], inspection["points"], inspection["colors"]
+rng = np.random.default_rng(42)
+if len(points) > 50_000:
+    chosen = rng.choice(len(points), 50_000, replace=False)
+    points, point_colors = points[chosen], point_colors[chosen]
+fig = plt.figure(figsize=(14, 6))
+ax1 = fig.add_subplot(121, projection="3d"); ax2 = fig.add_subplot(122, projection="3d")
+closed = np.vstack([centers, centers[0]])
+ax1.plot(*closed.T, "o-"); ax1.set_title("VGGT-X closed camera orbit")
+ax2.scatter(*points.T, c=point_colors, s=.2); ax2.set_title(f"VGGT-X COLMAP points: {len(points):,} shown")
+for axis in [ax1, ax2]: axis.set_box_aspect(np.ptp((closed if axis is ax1 else points), axis=0).clip(min=1e-6))
+plt.tight_layout(); plt.show()'''),
+    md('''## 5. Train official CityGaussian MCMC-3DGS
+
+The official pose-optimization configuration jointly refines the imperfect VGGT-X cameras and the Gaussians. `MAX_GAUSSIANS` controls memory use.'''),
+    code(r'''RUN_NAME = f"{SCENE}_vggtx_mcmc"
+CITY_OUTPUT = CITY_ROOT / "outputs" / RUN_NAME
+if RUN_TRAINING:
+    run([
+        CITY_ENV / "bin/python", CITY_ROOT / "main.py", "fit",
+        "--config", CITY_ROOT / "configs/colmap_pose_opt_mcmc.yaml",
+        "--data.path", VGGT_X_OUTPUT,
+        "--data.parser.init_args.down_sample_factor", str(DOWN_SAMPLE_FACTOR),
+        "--data.parser.init_args.down_sample_rounding_mode", "round",
+        "--model.density.init_args.cap_max", str(MAX_GAUSSIANS),
+        "-n", RUN_NAME,
+    ], cwd=CITY_ROOT)
+if not (CITY_OUTPUT / "config.yaml").is_file():
+    raise FileNotFoundError(f"CityGaussian training output missing: {CITY_OUTPUT}")
+print("Training output:", CITY_OUTPUT)'''),
+    md('''## 6. Evaluate the real training views
+
+These metrics measure input-view fit. They are useful diagnostics but are not held-out NVS scores.'''),
+    code(r'''if RUN_EVALUATION:
+    run([
+        CITY_ENV / "bin/python", CITY_ROOT / "main.py", "test",
+        "--config", CITY_OUTPUT / "config.yaml", "--save_val", "--val_train",
+    ], cwd=CITY_ROOT)
+
+# Keep the official files together on Drive. This includes the checkpoint and
+# any metric/render files produced by the official test command.
+DRIVE_MODEL = FINAL_ROOT / "citygaussian_output"
+shutil.copytree(CITY_OUTPUT, DRIVE_MODEL, dirs_exist_ok=True)
+metric_candidates = list(CITY_OUTPUT.rglob("*.csv")) + list(CITY_OUTPUT.rglob("*.json"))
+print("Metric/result files found:")
+for path in metric_candidates: print(" -", path.relative_to(CITY_OUTPUT))
+csv_candidates = [path for path in metric_candidates if path.suffix.lower() == ".csv" and
+                  any(word in path.name.lower() for word in ["metric", "result", "score"])]
+if csv_candidates:
+    shutil.copy2(csv_candidates[0], FINAL_ROOT / "metrics.csv")
+    print("Standard metric table:", FINAL_ROOT / "metrics.csv")
+else:
+    print("The official test command did not expose a CSV. Its original logs remain in citygaussian_output.")'''),
+    md('''## 7. Render the same closed orbit used for comparison
+
+The path follows the eight VGGT-X COLMAP cameras and inserts ten frames between neighboring views. CityGaussian renders both an MP4 and individual PNG files.'''),
+    code(r'''PATH_SCRIPT = Path("/content/make_city_path.py")
+PATH_SCRIPT.write_text(textwrap.dedent(f"""
+import sys, pycolmap
+sys.path.insert(0, r'{CODE_ROOT / "code"}')
+from src.citygaussian_bridge import closed_colmap_camera_path
+r = pycolmap.Reconstruction(r'{SPARSE}')
+print(closed_colmap_camera_path(r, r'{FINAL_ROOT / "camera_path.json"}', frames_between={FRAMES_BETWEEN}))
+"""), encoding="utf-8")
+run([VGGT_ENV / "bin/python", PATH_SCRIPT])
+
+ORBIT_VIDEO = FINAL_ROOT / "closed_orbit.mp4"
+if RUN_ORBIT_RENDER:
+    run([
+        CITY_ENV / "bin/python", CITY_ROOT / "render.py", CITY_OUTPUT,
+        "--camera-path-filename", FINAL_ROOT / "camera_path.json",
+        "--output-path", ORBIT_VIDEO, "--save-images", "--disable-transform",
+    ], cwd=CITY_ROOT)
+
+generated_frames = Path(str(ORBIT_VIDEO) + "_frames")
+ORBIT_FRAMES = FINAL_ROOT / "orbit_frames"
+ORBIT_FRAMES.mkdir(parents=True, exist_ok=True)
+for index, source in enumerate(sorted(generated_frames.glob("*.png"))):
+    shutil.copy2(source, ORBIT_FRAMES / f"view_{index:03d}.png")
+print("Saved video:", ORBIT_VIDEO)
+print("Saved frames:", len(list(ORBIT_FRAMES.glob("view_*.png"))))
+display(Video(str(ORBIT_VIDEO), embed=True, html_attributes="controls autoplay loop muted"))'''),
+    md('''## 8. Final output check
+
+Notebook 08 needs `closed_orbit.mp4`, `orbit_frames/`, and the official CityGaussian output. Missing files are reported before you disconnect the runtime.'''),
+    code(r'''checks = {
+    "COLMAP cameras": SPARSE / "cameras.bin",
+    "COLMAP images": SPARSE / "images.bin",
+    "COLMAP points": SPARSE / "points3D.bin",
+    "CityGaussian config": DRIVE_MODEL / "config.yaml",
+    "closed orbit": ORBIT_VIDEO,
+    "first comparison frame": ORBIT_FRAMES / "view_000.png",
+}
+for label, path in checks.items():
+    print("OK     " if path.exists() else "MISSING", label, path)
+if not all(path.exists() for path in checks.values()):
+    raise RuntimeError("Notebook 07 is incomplete. Read the first missing item above.")'''),
 ])
 
 
