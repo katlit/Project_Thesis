@@ -317,7 +317,8 @@ rows = rows[rows.scene.eq(SCENE)].sort_values(["view_order", "source"])
 assert len(rows) == 8, f"Expected eight selected images, found {len(rows)}"
 
 STAGE = Path("/content/vggtx_data") / SCENE
-VGGT_X_OUTPUT = STAGE.parent / f"{SCENE}_vggt_x"
+# VGGT-X constructs: <parent-of-scene>_vggt_x/<scene-name>.
+VGGT_X_OUTPUT = Path(f"{STAGE.parent}_vggt_x") / SCENE
 FINAL_ROOT = PROJECT_ROOT / "experiments/3DGS/VGGT_X_MCMC" / DATASET / SCENE
 FINAL_ROOT.mkdir(parents=True, exist_ok=True)
 print("Scene:", SCENE)
@@ -391,7 +392,9 @@ if RUN_INSTALL:
         # legacy diff-gaussian rasterizer. Install the ordinary dependencies
         # without that unused CUDA package or the optional Open3D viewer.
         common_lines = (CITY_ROOT / "requirements/common.txt").read_text(encoding="utf-8").splitlines()
-        skip_common = ("open3d", "git+https://github.com/graphdeco-inria/diff-gaussian-rasterization", "git+https://github.com/yzslab/simple-knn")
+        # CityGaussian imports its renderer registry eagerly, so the legacy
+        # rasterizer must be importable even when this run selects gsplat.
+        skip_common = ("open3d", "git+https://github.com/yzslab/simple-knn")
         filtered_common = [line for line in common_lines if not line.strip().lower().startswith(skip_common)]
         common_file = Path("/content/citygaussian_common_colab.txt")
         common_file.write_text("\n".join(filtered_common) + "\n", encoding="utf-8")
@@ -442,7 +445,9 @@ This creates the `_vggt_x` folder containing images, COLMAP cameras, points, and
     ], cwd=VGGT_X_ROOT)
 
 sparse_candidates = [VGGT_X_OUTPUT / "sparse/0", VGGT_X_OUTPUT / "sparse"]
-SPARSE = next((path for path in sparse_candidates if (path / "cameras.bin").is_file()), None)
+SPARSE = next((path for path in sparse_candidates
+               if all((path / name).is_file()
+                      for name in ["cameras.bin", "images.bin", "points3D.bin"])), None)
 if SPARSE is None:
     raise FileNotFoundError(f"VGGT-X did not create a COLMAP model under {VGGT_X_OUTPUT}")
 print("COLMAP model:", SPARSE)'''),
@@ -471,6 +476,13 @@ if int(inspection["registered"]) != 8:
     raise RuntimeError("Stop: VGGT-X did not register every selected input.")
 
 centers, points, point_colors = inspection["centers"], inspection["points"], inspection["colors"]
+total_colmap_points = len(points)
+print("COLMAP initialization points:", f"{total_colmap_points:,}")
+if total_colmap_points < 1_000:
+    print(
+        "WARNING: VGGT-X retained fewer than 1,000 global-alignment-supported points. "
+        "Training may still densify them, but this is a very weak sparse-view initialization."
+    )
 rng = np.random.default_rng(42)
 if len(points) > 50_000:
     chosen = rng.choice(len(points), 50_000, replace=False)
@@ -479,7 +491,7 @@ fig = plt.figure(figsize=(14, 6))
 ax1 = fig.add_subplot(121, projection="3d"); ax2 = fig.add_subplot(122, projection="3d")
 closed = np.vstack([centers, centers[0]])
 ax1.plot(*closed.T, "o-"); ax1.set_title("VGGT-X closed camera orbit")
-ax2.scatter(*points.T, c=point_colors, s=.2); ax2.set_title(f"VGGT-X COLMAP points: {len(points):,} shown")
+ax2.scatter(*points.T, c=point_colors, s=.2); ax2.set_title(f"VGGT-X COLMAP points: {len(points):,} shown / {total_colmap_points:,} total")
 for axis in [ax1, ax2]: axis.set_box_aspect(np.ptp((closed if axis is ax1 else points), axis=0).clip(min=1e-6))
 plt.tight_layout(); plt.show()'''),
     md('''## 5. Train official CityGaussian MCMC-3DGS
