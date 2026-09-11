@@ -324,7 +324,7 @@ print("Scene:", SCENE)
 print("Final Drive folder:", FINAL_ROOT)'''),
     md('''## 1. Install the official projects
 
-The two projects require older, isolated Python environments. Current Colab exposes CUDA 12.8, while CityGaussian pins a PyTorch build for CUDA 11.8. Its `simple-knn` CUDA extension therefore cannot compile. This notebook transparently replaces only that **one-time initial Gaussian-scale calculation** with SciPy nearest-neighbour distances. The official VGGT-X alignment, CityGaussian MCMC optimization, and gsplat renderer are unchanged. The adaptation is saved to the experiment folder.'''),
+The two projects use isolated Python environments. CityGaussian's original PyTorch 2.0.1/CUDA 11.8 pin cannot compile CUDA extensions against current Colab CUDA 12.8. The notebook therefore installs official PyTorch 2.7.1/CUDA 12.8 and transparently replaces only the obsolete `simple-knn` **one-time initial Gaussian-scale calculation** with SciPy nearest-neighbour distances. The official VGGT-X alignment, CityGaussian MCMC optimization, and gsplat renderer are unchanged. Both adaptations are saved to the experiment folder.'''),
     code(r'''%pip -q install uv
 
 VGGT_X_ROOT = Path("/content/VGGT-X")
@@ -375,14 +375,18 @@ if RUN_INSTALL:
     if not city_ready.is_file():
         # Clear the incomplete environment left by an earlier failed install.
         run(["uv", "venv", "--clear", "--python", "3.9", "--seed", CITY_ENV])
-        # These 2023 CUDA setup.py projects are not compatible with the newest
-        # pip/setuptools metadata path. PyTorch 2.0.1 also requires NumPy 1.x.
+        # These setup.py projects need the older packaging path and NumPy 1.x.
         run([
             city_python, "-m", "pip", "install",
             "pip<25", "setuptools<70", "wheel<0.44", "numpy<2", "ninja",
         ], cwd=CITY_ROOT)
-        # Run ordinary pip from the repository root so nested -r paths resolve.
-        run([city_python, "-m", "pip", "install", "-r", "requirements/pyt201_cu118.txt"], cwd=CITY_ROOT)
+        # Match the PyTorch CUDA build to Colab's CUDA 12.8 compiler. The
+        # repository's original torch 2.0.1+cu118 pin cannot build gsplat here.
+        run([
+            city_python, "-m", "pip", "install",
+            "torch==2.7.1", "torchvision==0.22.1",
+            "--index-url", "https://download.pytorch.org/whl/cu128",
+        ], cwd=CITY_ROOT)
         # The selected MCMC configuration uses GSplatCameraOptRenderer, not the
         # legacy diff-gaussian rasterizer. Install the ordinary dependencies
         # without that unused CUDA package or the optional Open3D viewer.
@@ -397,6 +401,11 @@ if RUN_INSTALL:
             "-r", common_file,
         ], cwd=CITY_ROOT)
         adaptation = patch_portable_knn_initialization(CITY_ROOT)
+        adaptation["pytorch_environment"] = {
+            "torch": "2.7.1+cu128",
+            "torchvision": "0.22.1+cu128",
+            "reason": "match current Colab CUDA 12.8 compiler for gsplat",
+        }
         (FINAL_ROOT / "environment_adaptations.json").write_text(
             json.dumps(adaptation, indent=2), encoding="utf-8"
         )
