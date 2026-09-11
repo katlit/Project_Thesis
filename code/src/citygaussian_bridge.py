@@ -10,6 +10,52 @@ import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 
+def patch_portable_knn_initialization(city_root):
+    """Replace CityGaussian's CUDA-compiled simple-knn scale initializer.
+
+    The replacement computes the same nearest-neighbour squared-distance
+    quantity with SciPy.  This code runs once when the initial point cloud is
+    converted to Gaussians; rendering and MCMC optimization remain unchanged.
+    """
+    source_path = Path(city_root) / "internal/models/vanilla_gaussian.py"
+    source = source_path.read_text(encoding="utf-8")
+    old = """        # TODO: replace `simple_knn`
+        from simple_knn._C import distCUDA2
+        # the parameter device may be "cpu", so tensor must move to cuda before calling distCUDA2()
+        dist2 = torch.clamp_min(distCUDA2(fused_point_cloud.cuda()), 0.0000001).to(fused_point_cloud.device)
+"""
+    new = """        # Portable initialization for runtimes whose CUDA toolkit does not
+        # match this environment's PyTorch build.  This replaces only the
+        # one-time simple-knn call; the renderer and optimization are unchanged.
+        from scipy.spatial import cKDTree
+        xyz_numpy = fused_point_cloud.detach().cpu().numpy()
+        neighbour_count = min(4, len(xyz_numpy))
+        if neighbour_count < 2:
+            dist2 = torch.full((len(xyz_numpy),), 1e-7, dtype=fused_point_cloud.dtype,
+                               device=fused_point_cloud.device)
+        else:
+            distances, _ = cKDTree(xyz_numpy).query(xyz_numpy, k=neighbour_count, workers=-1)
+            distance_squared = np.mean(np.square(distances[:, 1:]), axis=1)
+            dist2 = torch.as_tensor(distance_squared, dtype=fused_point_cloud.dtype,
+                                    device=fused_point_cloud.device).clamp_min_(1e-7)
+"""
+    if old in source:
+        source_path.write_text(source.replace(old, new, 1), encoding="utf-8")
+        status = "applied"
+    elif "Portable initialization for runtimes" in source:
+        status = "already_applied"
+    else:
+        raise RuntimeError(
+            "CityGaussian's scale-initialization code changed; refusing to patch an unknown version."
+        )
+    return {
+        "adaptation": "portable_scipy_knn_gaussian_scale_initialization",
+        "status": status,
+        "file": str(source_path),
+        "scope": "one-time initial Gaussian scales only",
+    }
+
+
 def _camera_matrix(image):
     """Return an OpenCV camera-to-world matrix from a PyCOLMAP image."""
     world_to_camera = np.eye(4, dtype=np.float64)

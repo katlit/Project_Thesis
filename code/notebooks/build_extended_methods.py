@@ -324,7 +324,7 @@ print("Scene:", SCENE)
 print("Final Drive folder:", FINAL_ROOT)'''),
     md('''## 1. Install the official projects
 
-The installation uses the repositories' own requirement files. If CUDA compilation fails, keep the error: do not silently replace the official renderer with our implementation.'''),
+The two projects require older, isolated Python environments. Current Colab exposes CUDA 12.8, while CityGaussian pins a PyTorch build for CUDA 11.8. Its `simple-knn` CUDA extension therefore cannot compile. This notebook transparently replaces only that **one-time initial Gaussian-scale calculation** with SciPy nearest-neighbour distances. The official VGGT-X alignment, CityGaussian MCMC optimization, and gsplat renderer are unchanged. The adaptation is saved to the experiment folder.'''),
     code(r'''%pip -q install uv
 
 VGGT_X_ROOT = Path("/content/VGGT-X")
@@ -349,6 +349,8 @@ def run(command, cwd=None, env=None):
         print(result.stdout[-2_000:])
 
 if RUN_INSTALL:
+    from src.citygaussian_bridge import patch_portable_knn_initialization
+
     if not (VGGT_X_ROOT / ".git").is_dir():
         run(["git", "clone", "--recursive", "https://github.com/Linketic/VGGT-X.git", VGGT_X_ROOT])
     else:
@@ -394,12 +396,11 @@ if RUN_INSTALL:
             "lightning[pytorch-extra]==2.3.*", "pytorch-lightning==2.3.*", "bitsandbytes==0.45.*",
             "-r", common_file,
         ], cwd=CITY_ROOT)
-        # simple-knn is still required once by VanillaGaussian.setup_from_pcd.
-        # Build only that small CUDA extension and keep verbose compiler output.
-        run([
-            city_python, "-m", "pip", "install", "-v", "--no-build-isolation",
-            "git+https://github.com/yzslab/simple-knn.git@44f764299fa305faf6ec5ebd99939e0508331503",
-        ], cwd=CITY_ROOT)
+        adaptation = patch_portable_knn_initialization(CITY_ROOT)
+        (FINAL_ROOT / "environment_adaptations.json").write_text(
+            json.dumps(adaptation, indent=2), encoding="utf-8"
+        )
+        print("CityGaussian compatibility adaptation:", adaptation["status"])
         run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
         city_ready.write_text("ok\n", encoding="utf-8")
     else:
