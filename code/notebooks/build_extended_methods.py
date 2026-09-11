@@ -322,11 +322,16 @@ if RUN_INSTALL:
     run(["uv", "venv", "--python", "3.10", VGGT_ENV])
     run(["uv", "pip", "install", "--python", VGGT_ENV / "bin/python", "-r", VGGT_X_ROOT / "requirements.txt"])
 
-    run(["uv", "venv", "--python", "3.9", CITY_ENV])
+    # Clear the incomplete environment left by an earlier failed installation.
+    run(["uv", "venv", "--clear", "--python", "3.9", "--seed", CITY_ENV])
     city_python = CITY_ENV / "bin/python"
-    run(["uv", "pip", "install", "--python", city_python, "-r", CITY_ROOT / "requirements/pyt201_cu118.txt"])
-    run(["uv", "pip", "install", "--python", city_python, "-r", CITY_ROOT / "requirements.txt"])
-    run(["uv", "pip", "install", "--python", city_python, "-r", CITY_ROOT / "requirements/gsplat.txt"])
+    # CityGaussian's requirement files contain nested relative `-r` entries.
+    # Run ordinary pip from the repository root, exactly as its documentation
+    # expects, instead of asking uv to resolve those nested paths externally.
+    run([city_python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=CITY_ROOT)
+    run([city_python, "-m", "pip", "install", "-r", "requirements/pyt201_cu118.txt"], cwd=CITY_ROOT)
+    run([city_python, "-m", "pip", "install", "-r", "requirements.txt"], cwd=CITY_ROOT)
+    run([city_python, "-m", "pip", "install", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
 
 print("VGGT-X Python:", VGGT_ENV / "bin/python")
 print("CityGaussian Python:", CITY_ENV / "bin/python")'''),
