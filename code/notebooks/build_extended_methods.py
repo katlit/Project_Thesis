@@ -15,6 +15,9 @@ def code(text):
 
 
 def save(name, cells):
+    stem = Path(name).stem.lower().replace("_", "-")
+    for index, cell in enumerate(cells):
+        cell["id"] = f"{stem}-{index:02d}"
     notebook = nbf.v4.new_notebook(cells=cells)
     notebook.metadata.kernelspec = {"display_name": "Python 3", "language": "python", "name": "python3"}
     notebook.metadata.language_info = {"name": "python", "version": "3"}
