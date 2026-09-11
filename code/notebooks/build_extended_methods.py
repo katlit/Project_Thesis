@@ -416,10 +416,12 @@ if RUN_INSTALL:
         rasterizer_root = Path("/content/diff-gaussian-rasterization")
         if not (rasterizer_root / ".git").is_dir():
             run([
-                "git", "clone", "https://github.com/graphdeco-inria/diff-gaussian-rasterization.git",
+                "git", "clone", "--recursive",
+                "https://github.com/graphdeco-inria/diff-gaussian-rasterization.git",
                 rasterizer_root,
             ])
         run(["git", "-C", rasterizer_root, "checkout", "59f5f77e3ddbac3ed9db93ec2cfe99ed6c5d121d"])
+        run(["git", "-C", rasterizer_root, "submodule", "update", "--init", "--recursive"])
         rasterizer_adaptation = patch_cuda128_cstdint(rasterizer_root)
         adaptation["legacy_rasterizer"] = rasterizer_adaptation
         run([
