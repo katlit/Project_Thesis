@@ -83,14 +83,14 @@ import torch, xformers
 print("Torch:", torch.__version__, "| xFormers:", xformers.__version__)
 print("Restart the runtime now only if Colab asks you to do so.")'''),
     code(common_setup + r'''
-import gc, getpass, json
+import gc, getpass, json, os
 import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from huggingface_hub import hf_hub_download, login
+from huggingface_hub import get_token, hf_hub_download, login
 from IPython.display import Video, display
 
 sys.path.insert(0, "/content/lagernvs")
@@ -130,7 +130,21 @@ plt.tight_layout(); plt.show()'''),
     md('''## 2. Build target Plucker rays and render learned RGB
 
 The target cameras form a closed orbit. LagerNVS receives their Plücker rays and directly predicts dense RGB. This is learned NVS, not point splatting.'''),
-    code(r'''token = getpass.getpass("Hugging Face token (input is hidden): ")
+    code(r'''# Reuse a cached Hugging Face login when available. Empty environment
+# variables would create the invalid HTTP header `Bearer `, so remove them.
+for variable in ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]:
+    if not os.environ.get(variable, "").strip():
+        os.environ.pop(variable, None)
+
+token = get_token()
+if not token:
+    token = getpass.getpass("Paste a Hugging Face READ token (input is hidden): ").strip()
+if not token or not token.startswith("hf_"):
+    raise RuntimeError(
+        "A non-empty Hugging Face token beginning with 'hf_' is required. "
+        "Request access to facebook/lagernvs_general_512, create a READ token, "
+        "then rerun this cell."
+    )
 login(token=token, add_to_git_credential=False)
 saved = np.load(GEOMETRY_ROOT / "vggt_geometry.npz")
 extrinsics, intrinsics = saved["extrinsics"], saved["intrinsics"]
@@ -151,7 +165,7 @@ camera_tokens = torch.zeros(1, len(scene_rows) + TARGET_FRAMES, 11, device="cuda
 camera_tokens[:, :, 9] = camera_scale
 
 model = EncDec_VitB8(pretrained_vggt=False, attention_to_features_type="bidirectional_cross_attention")
-checkpoint = hf_hub_download(MODEL_REPO, filename="model.pt")
+checkpoint = hf_hub_download(MODEL_REPO, filename="model.pt", token=token)
 model.load_state_dict(torch.load(checkpoint, map_location="cpu")["model"])
 model = model.cuda().eval()
 with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
