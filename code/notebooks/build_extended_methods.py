@@ -318,7 +318,19 @@ CITY_ENV = Path("/content/envs/citygaussian")
 
 def run(command, cwd=None, env=None):
     print("RUN:", " ".join(map(str, command)))
-    subprocess.run([str(item) for item in command], cwd=cwd, env=env, check=True)
+    result = subprocess.run(
+        [str(item) for item in command], cwd=cwd, env=env,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    if result.returncode != 0:
+        print("\n----- command output (last 12,000 characters) -----")
+        print(result.stdout[-12_000:])
+        raise RuntimeError(
+            f"Command failed with exit code {result.returncode}. "
+            "The useful package/build error is printed immediately above."
+        )
+    if result.stdout.strip():
+        print(result.stdout[-2_000:])
 
 if RUN_INSTALL:
     if not (VGGT_X_ROOT / ".git").is_dir():
@@ -348,8 +360,10 @@ if RUN_INSTALL:
     # expects, instead of asking uv to resolve those nested paths externally.
     run([city_python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=CITY_ROOT)
     run([city_python, "-m", "pip", "install", "-r", "requirements/pyt201_cu118.txt"], cwd=CITY_ROOT)
-    run([city_python, "-m", "pip", "install", "-r", "requirements.txt"], cwd=CITY_ROOT)
-    run([city_python, "-m", "pip", "install", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
+    # The common requirements compile CUDA extensions that import torch from
+    # setup.py. Build them in this environment so they can see installed torch.
+    run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements.txt"], cwd=CITY_ROOT)
+    run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
 
 print("VGGT-X Python:", VGGT_ENV / "bin/python")
 print("CityGaussian Python:", CITY_ENV / "bin/python")'''),
