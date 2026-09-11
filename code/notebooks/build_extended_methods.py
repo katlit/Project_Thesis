@@ -90,7 +90,8 @@ import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from huggingface_hub import get_token, hf_hub_download, login
+from huggingface_hub import hf_hub_download, login
+import ipywidgets as widgets
 from IPython.display import Video, display
 
 sys.path.insert(0, "/content/lagernvs")
@@ -129,23 +130,38 @@ for axis, row in zip(axes, scene_rows.itertuples()):
 plt.tight_layout(); plt.show()'''),
     md('''## 2. Build target Plucker rays and render learned RGB
 
-The target cameras form a closed orbit. LagerNVS receives their Plücker rays and directly predicts dense RGB. This is learned NVS, not point splatting.'''),
-    code(r'''# Reuse a cached Hugging Face login when available. Empty environment
-# variables would create the invalid HTTP header `Bearer `, so remove them.
-for variable in ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]:
-    if not os.environ.get(variable, "").strip():
-        os.environ.pop(variable, None)
+The target cameras form a closed orbit. LagerNVS receives their Plucker rays and directly predicts dense RGB. This is learned NVS, not point splatting.
 
-token = get_token()
+The checkpoint is gated. Enter a Hugging Face READ token below, then run the following inference cell. VS Code cannot read Colab's Secret Vault. The password box hides the value and is cleared after login.'''),
+    code(r'''token_box = widgets.Password(
+    description="HF token:", placeholder="hf_...",
+    layout=widgets.Layout(width="520px"),
+)
+display(token_box)
+print("Enter the token above, then run the next cell.")'''),
+    code(r'''# Prefer an environment token or an earlier cached login. Otherwise use
+# the password widget from the preceding cell. This avoids Colab Secret Vault.
+token = os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGING_FACE_HUB_TOKEN", "").strip()
+cache_candidates = [
+    Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface")) / "token",
+    Path.home() / ".huggingface/token",
+]
 if not token:
-    token = getpass.getpass("Paste a Hugging Face READ token (input is hidden): ").strip()
+    for token_path in cache_candidates:
+        if token_path.is_file():
+            token = token_path.read_text(encoding="utf-8").strip()
+            if token:
+                break
+if not token and "token_box" in globals():
+    token = token_box.value.strip()
 if not token or not token.startswith("hf_"):
     raise RuntimeError(
-        "A non-empty Hugging Face token beginning with 'hf_' is required. "
-        "Request access to facebook/lagernvs_general_512, create a READ token, "
-        "then rerun this cell."
+        "No valid token was entered. Request model access, enter an hf_... "
+        "READ token in the password box above, and rerun this cell."
     )
 login(token=token, add_to_git_credential=False)
+if "token_box" in globals():
+    token_box.value = ""
 saved = np.load(GEOMETRY_ROOT / "vggt_geometry.npz")
 extrinsics, intrinsics = saved["extrinsics"], saved["intrinsics"]
 normalized_c2w, normalized_k, first_camera, scene_scale = normalize_lagernvs_cameras(extrinsics, intrinsics)
@@ -176,7 +192,7 @@ target_intrinsics = np.zeros((TARGET_FRAMES, 3, 3), np.float32)
 target_values = target_fxfycxcy[0].float().cpu().numpy()
 target_intrinsics[:, 0, 0] = target_values[:, 0]; target_intrinsics[:, 1, 1] = target_values[:, 1]
 target_intrinsics[:, 0, 2] = target_values[:, 2]; target_intrinsics[:, 1, 2] = target_values[:, 3]; target_intrinsics[:, 2, 2] = 1
-del model, input_images, rays, camera_tokens; gc.collect(); torch.cuda.empty_cache()
+del model, input_images, rays, camera_tokens; token = None; gc.collect(); torch.cuda.empty_cache()
 print("Learned views:", learned_rgb.shape)'''),
     md('''## 3. Add geometric trust maps
 
