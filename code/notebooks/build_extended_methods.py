@@ -45,8 +45,9 @@ save("06_LagerNVS_confidence_3dgs.ipynb", [
 This notebook tests learned Plucker-ray NVS. LagerNVS generates dense RGB views. VGGT geometry supplies a separate validity mask and confidence weight. The learned RGB is never treated as ground truth without geometric support.
 
 Run notebook 05 first because this notebook loads its `vggt_geometry.npz`. The LagerNVS checkpoint is gated; request access on Hugging Face and provide a token when prompted.'''),
-    code(r'''# Use LagerNVS's official dependency file. It includes xformers, which
-# is required while importing the renderer attention blocks.
+    code(r'''# Start from LagerNVS's official dependency file. Open3D and websockets
+# are used only by its interactive viewers, not by this notebook. Open3D has no
+# wheel for the current Colab Python, and would abort the whole installation.
 import subprocess
 from pathlib import Path
 
@@ -60,7 +61,19 @@ else:
         str(LAGERNVS_ROOT),
     ], check=True)
 %pip -q install --index-url https://download.pytorch.org/whl/cu126 "torch==2.8.0" "torchvision==0.23.0" "torchaudio==2.8.0"
-%pip -q install -r /content/lagernvs/requirements.txt "gsplat==1.3.0" matplotlib imageio imageio-ffmpeg
+
+official_requirements = (LAGERNVS_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+viewer_only = ("open3d", "websockets")
+colab_requirements = [
+    line for line in official_requirements
+    if not line.strip().lower().startswith(viewer_only)
+]
+COLAB_REQUIREMENTS = Path("/content/lagernvs_colab_requirements.txt")
+COLAB_REQUIREMENTS.write_text("\n".join(colab_requirements) + "\n", encoding="utf-8")
+print("Skipped optional viewer packages: open3d, websockets")
+
+%pip -q install -r /content/lagernvs_colab_requirements.txt
+%pip -q install "gsplat==1.3.0" matplotlib imageio imageio-ffmpeg
 
 # Verify the dependency that caused the previous hidden import failure.
 import torch, xformers
