@@ -56,6 +56,25 @@ def patch_portable_knn_initialization(city_root):
     }
 
 
+def patch_cuda128_cstdint(rasterizer_root):
+    """Add the standard integer header omitted by the legacy rasterizer."""
+    header = Path(rasterizer_root) / "cuda_rasterizer/rasterizer_impl.h"
+    source = header.read_text(encoding="utf-8")
+    marker = "#include <cstdint>  // Colab CUDA 12.8 compatibility"
+    if marker in source:
+        status = "already_applied"
+    else:
+        source = marker + "\n" + source
+        header.write_text(source, encoding="utf-8")
+        status = "applied"
+    return {
+        "adaptation": "legacy_rasterizer_cuda128_cstdint_header",
+        "status": status,
+        "file": str(header),
+        "scope": "compile-only dependency imported by CityGaussian renderer registry",
+    }
+
+
 def _camera_matrix(image):
     """Return an OpenCV camera-to-world matrix from a PyCOLMAP image."""
     world_to_camera = np.eye(4, dtype=np.float64)

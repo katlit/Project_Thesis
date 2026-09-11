@@ -350,7 +350,7 @@ def run(command, cwd=None, env=None):
         print(result.stdout[-2_000:])
 
 if RUN_INSTALL:
-    from src.citygaussian_bridge import patch_portable_knn_initialization
+    from src.citygaussian_bridge import patch_cuda128_cstdint, patch_portable_knn_initialization
 
     if not (VGGT_X_ROOT / ".git").is_dir():
         run(["git", "clone", "--recursive", "https://github.com/Linketic/VGGT-X.git", VGGT_X_ROOT])
@@ -392,9 +392,9 @@ if RUN_INSTALL:
         # legacy diff-gaussian rasterizer. Install the ordinary dependencies
         # without that unused CUDA package or the optional Open3D viewer.
         common_lines = (CITY_ROOT / "requirements/common.txt").read_text(encoding="utf-8").splitlines()
-        # CityGaussian imports its renderer registry eagerly, so the legacy
-        # rasterizer must be importable even when this run selects gsplat.
-        skip_common = ("open3d", "git+https://github.com/yzslab/simple-knn")
+        # Install CUDA repositories separately below so their compatibility
+        # adjustments are explicit and reproducible.
+        skip_common = ("open3d", "git+https://github.com/graphdeco-inria/diff-gaussian-rasterization", "git+https://github.com/yzslab/simple-knn")
         filtered_common = [line for line in common_lines if not line.strip().lower().startswith(skip_common)]
         common_file = Path("/content/citygaussian_common_colab.txt")
         common_file.write_text("\n".join(filtered_common) + "\n", encoding="utf-8")
@@ -409,6 +409,22 @@ if RUN_INSTALL:
             "torchvision": "0.22.1+cu128",
             "reason": "match current Colab CUDA 12.8 compiler for gsplat",
         }
+        # CityGaussian imports the legacy renderer registry eagerly, although
+        # this configuration actually renders with gsplat. Its old header
+        # relies on integer types being included indirectly; CUDA 12.8 no
+        # longer provides that accident of include ordering.
+        rasterizer_root = Path("/content/diff-gaussian-rasterization")
+        if not (rasterizer_root / ".git").is_dir():
+            run([
+                "git", "clone", "https://github.com/graphdeco-inria/diff-gaussian-rasterization.git",
+                rasterizer_root,
+            ])
+        run(["git", "-C", rasterizer_root, "checkout", "59f5f77e3ddbac3ed9db93ec2cfe99ed6c5d121d"])
+        rasterizer_adaptation = patch_cuda128_cstdint(rasterizer_root)
+        adaptation["legacy_rasterizer"] = rasterizer_adaptation
+        run([
+            city_python, "-m", "pip", "install", "-v", "--no-build-isolation", rasterizer_root,
+        ], cwd=CITY_ROOT)
         (FINAL_ROOT / "environment_adaptations.json").write_text(
             json.dumps(adaptation, indent=2), encoding="utf-8"
         )
