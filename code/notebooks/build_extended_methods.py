@@ -45,8 +45,16 @@ save("06_LagerNVS_confidence_3dgs.ipynb", [
 This notebook tests learned Plucker-ray NVS. LagerNVS generates dense RGB views. VGGT geometry supplies a separate validity mask and confidence weight. The learned RGB is never treated as ground truth without geometric support.
 
 Run notebook 05 first because this notebook loads its `vggt_geometry.npz`. The LagerNVS checkpoint is gated; request access on Hugging Face and provide a token when prompted.'''),
-    code(r'''%pip -q install "torch==2.8.0" "torchvision==0.23.0" einops omegaconf lpips easydict iopath scipy av timm==1.0.25 huggingface_hub pandas pillow matplotlib imageio imageio-ffmpeg "gsplat==1.3.0"
-!test -d /content/lagernvs/.git || git clone -q https://github.com/facebookresearch/lagernvs.git /content/lagernvs'''),
+    code(r'''# Use LagerNVS's official dependency file. It includes xformers, which
+# is required while importing the renderer attention blocks.
+!test -d /content/lagernvs/.git || git clone -q https://github.com/facebookresearch/lagernvs.git /content/lagernvs
+%pip -q install --index-url https://download.pytorch.org/whl/cu126 "torch==2.8.0" "torchvision==0.23.0" "torchaudio==2.8.0"
+%pip -q install -r /content/lagernvs/requirements.txt "gsplat==1.3.0" matplotlib imageio imageio-ffmpeg
+
+# Verify the dependency that caused the previous hidden import failure.
+import torch, xformers
+print("Torch:", torch.__version__, "| xFormers:", xformers.__version__)
+print("Restart the runtime now only if Colab asks you to do so.")'''),
     code(common_setup + r'''
 import gc, getpass, json
 import imageio.v2 as imageio
