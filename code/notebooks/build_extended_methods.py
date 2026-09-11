@@ -381,8 +381,25 @@ if RUN_INSTALL:
         ], cwd=CITY_ROOT)
         # Run ordinary pip from the repository root so nested -r paths resolve.
         run([city_python, "-m", "pip", "install", "-r", "requirements/pyt201_cu118.txt"], cwd=CITY_ROOT)
-        # CUDA setup.py imports torch, therefore build without isolation.
-        run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements.txt"], cwd=CITY_ROOT)
+        # The selected MCMC configuration uses GSplatCameraOptRenderer, not the
+        # legacy diff-gaussian rasterizer. Install the ordinary dependencies
+        # without that unused CUDA package or the optional Open3D viewer.
+        common_lines = (CITY_ROOT / "requirements/common.txt").read_text(encoding="utf-8").splitlines()
+        skip_common = ("open3d", "git+https://github.com/graphdeco-inria/diff-gaussian-rasterization", "git+https://github.com/yzslab/simple-knn")
+        filtered_common = [line for line in common_lines if not line.strip().lower().startswith(skip_common)]
+        common_file = Path("/content/citygaussian_common_colab.txt")
+        common_file.write_text("\n".join(filtered_common) + "\n", encoding="utf-8")
+        run([
+            city_python, "-m", "pip", "install",
+            "lightning[pytorch-extra]==2.3.*", "pytorch-lightning==2.3.*", "bitsandbytes==0.45.*",
+            "-r", common_file,
+        ], cwd=CITY_ROOT)
+        # simple-knn is still required once by VanillaGaussian.setup_from_pcd.
+        # Build only that small CUDA extension and keep verbose compiler output.
+        run([
+            city_python, "-m", "pip", "install", "-v", "--no-build-isolation",
+            CITY_ROOT / "submodules/simple-knn",
+        ], cwd=CITY_ROOT)
         run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
         city_ready.write_text("ok\n", encoding="utf-8")
     else:
