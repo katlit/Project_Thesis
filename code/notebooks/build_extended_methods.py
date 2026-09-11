@@ -368,18 +368,25 @@ if RUN_INSTALL:
         print("Reusing existing VGGT-X environment:", VGGT_ENV)
     run(["uv", "pip", "install", "--python", vggt_python, "-r", VGGT_X_ROOT / "requirements.txt"])
 
-    # Clear the incomplete environment left by an earlier failed installation.
-    run(["uv", "venv", "--clear", "--python", "3.9", "--seed", CITY_ENV])
     city_python = CITY_ENV / "bin/python"
-    # CityGaussian's requirement files contain nested relative `-r` entries.
-    # Run ordinary pip from the repository root, exactly as its documentation
-    # expects, instead of asking uv to resolve those nested paths externally.
-    run([city_python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], cwd=CITY_ROOT)
-    run([city_python, "-m", "pip", "install", "-r", "requirements/pyt201_cu118.txt"], cwd=CITY_ROOT)
-    # The common requirements compile CUDA extensions that import torch from
-    # setup.py. Build them in this environment so they can see installed torch.
-    run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements.txt"], cwd=CITY_ROOT)
-    run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
+    city_ready = CITY_ENV / ".citygaussian_ready"
+    if not city_ready.is_file():
+        # Clear the incomplete environment left by an earlier failed install.
+        run(["uv", "venv", "--clear", "--python", "3.9", "--seed", CITY_ENV])
+        # These 2023 CUDA setup.py projects are not compatible with the newest
+        # pip/setuptools metadata path. PyTorch 2.0.1 also requires NumPy 1.x.
+        run([
+            city_python, "-m", "pip", "install",
+            "pip<25", "setuptools<70", "wheel<0.44", "numpy<2", "ninja",
+        ], cwd=CITY_ROOT)
+        # Run ordinary pip from the repository root so nested -r paths resolve.
+        run([city_python, "-m", "pip", "install", "-r", "requirements/pyt201_cu118.txt"], cwd=CITY_ROOT)
+        # CUDA setup.py imports torch, therefore build without isolation.
+        run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements.txt"], cwd=CITY_ROOT)
+        run([city_python, "-m", "pip", "install", "--no-build-isolation", "-r", "requirements/gsplat.txt"], cwd=CITY_ROOT)
+        city_ready.write_text("ok\n", encoding="utf-8")
+    else:
+        print("Reusing complete CityGaussian environment:", CITY_ENV)
 
 print("VGGT-X Python:", VGGT_ENV / "bin/python")
 print("CityGaussian Python:", CITY_ENV / "bin/python")'''),
