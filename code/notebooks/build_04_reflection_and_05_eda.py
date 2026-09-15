@@ -96,9 +96,10 @@ def build():
         DATASETS_TO_PROCESS = None       # e.g. ["3DRealCar"] or None for all
         RUN_EXPORT = False              # inspect the preview first, then set True
         OVERWRITE = False               # False safely resumes an interrupted export
-        PREVIEW_IMAGES = 6
+        PREVIEW_IMAGES = 1             # raise only after one image succeeds
         HIGHLIGHT_THRESHOLD = 0.30       # lower finds more suspected highlights
         MASK_DILATION = 40               # context removed around predicted highlights
+        USE_MIXED_PRECISION = True       # substantially lowers activation memory
 
         if not INPUT_MANIFEST.is_file():
             raise FileNotFoundError(f"Run notebook 03_A export first: {INPUT_MANIFEST}")
@@ -119,8 +120,12 @@ def build():
         weights = Path(unreflectanything.cache("weights"))
         if not any(weights.glob("*.pth")):
             subprocess.run(["unreflectanything", "download", "--weights"], check=True)
+        free_before, total_memory = torch.cuda.mem_get_info()
+        print(f"Before model: {free_before / 1024**3:.1f}/{total_memory / 1024**3:.1f} GiB free")
         model = unreflectanything.model(pretrained=True, device=torch.device("cuda"), verbose=False)
-        model.eval()
+        model.eval().requires_grad_(False)
+        free_after, _ = torch.cuda.mem_get_info()
+        print(f"After model:  {free_after / 1024**3:.1f}/{total_memory / 1024**3:.1f} GiB free")
         print("Weights:", weights)
         '''),
         code(r'''
@@ -134,6 +139,7 @@ def build():
             report = process_with_unreflectanything(
                 row.method_image, row.method_mask, out_image, out_mask, model,
                 threshold=HIGHLIGHT_THRESHOLD, dilation=MASK_DILATION, overwrite=True,
+                use_amp=USE_MIXED_PRECISION,
             )
             preview_records.append((row, out_image, report))
 
@@ -164,6 +170,7 @@ def build():
                 report = process_with_unreflectanything(
                     row.method_image, row.method_mask, output_image, output_mask, model,
                     threshold=HIGHLIGHT_THRESHOLD, dilation=MASK_DILATION, overwrite=OVERWRITE,
+                    use_amp=USE_MIXED_PRECISION,
                 )
                 record = row._asdict()
                 record.update({

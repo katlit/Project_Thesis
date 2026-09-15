@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import shutil
+import gc
 
 import numpy as np
 from PIL import Image
@@ -56,6 +57,7 @@ def process_with_unreflectanything(
     threshold=0.30,
     dilation=40,
     overwrite=False,
+    use_amp=True,
 ):
     """Run official file inference, restore the original canvas, and copy the mask."""
     source_path, mask_path = Path(source_path), Path(mask_path)
@@ -75,15 +77,20 @@ def process_with_unreflectanything(
     output_mask_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_image_path.with_name(output_image_path.stem + ".diffuse.tmp.png")
     try:
-        unreflectanything.inference(
-            source_path,
-            output=temporary,
-            model=model,
-            threshold=float(threshold),
-            dilation=int(dilation),
-            resize_output=True,
-            verbose=False,
-        )
+        import torch
+        with torch.inference_mode(), torch.amp.autocast(
+            "cuda", dtype=torch.float16,
+            enabled=bool(use_amp and torch.cuda.is_available()),
+        ):
+            unreflectanything.inference(
+                source_path,
+                output=temporary,
+                model=model,
+                threshold=float(threshold),
+                dilation=int(dilation),
+                resize_output=True,
+                verbose=False,
+            )
         with Image.open(source_path) as opened:
             before = opened.convert("RGB")
         with Image.open(mask_path) as opened:
@@ -96,3 +103,6 @@ def process_with_unreflectanything(
         return {"status": "written", **change_statistics(before, after, mask)}
     finally:
         temporary.unlink(missing_ok=True)
+        gc.collect()
+        if "torch" in locals() and torch.cuda.is_available():
+            torch.cuda.empty_cache()
