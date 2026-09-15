@@ -80,6 +80,20 @@ def crop_mesh_oriented(mesh, normalized_box, rotation_degrees=(0, 0, 0),
     return cropped
 
 
+def points_in_oriented_crop_frame(points, reference_bounds, rotation_degrees=(0, 0, 0)):
+    """Transform display points into the same temporary frame used for cropping."""
+    points = np.asarray(points, dtype=float)
+    bounds = np.asarray(reference_bounds, dtype=float)
+    if bounds.shape != (2, 3):
+        raise ValueError("reference_bounds must have shape (2, 3).")
+    angles = np.asarray(rotation_degrees, dtype=float)
+    if angles.shape != (3,) or not np.isfinite(angles).all():
+        raise ValueError("rotation_degrees must contain finite X, Y, Z angles.")
+    center = bounds.mean(axis=0)
+    rotation = Rotation.from_euler("xyz", angles, degrees=True).as_matrix()
+    return (points - center) @ rotation.T
+
+
 def component_table(mesh, minimum_faces=50):
     rows = []
     for index, part in enumerate(mesh.split(only_watertight=False)):

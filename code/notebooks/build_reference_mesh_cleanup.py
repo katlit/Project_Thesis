@@ -47,7 +47,8 @@ cells = [
     subprocess.run(command, check=True)
     sys.path.insert(0, str(CODE_ROOT / "code"))
 
-    from src.mesh_cleanup import crop_mesh_oriented, export_clean_reference, load_triangle_mesh, mesh_summary, sample_for_display
+    from src.mesh_cleanup import (crop_mesh_oriented, export_clean_reference, load_triangle_mesh,
+                                  mesh_summary, points_in_oriented_crop_frame, sample_for_display)
     '''),
     code('''
     def find_unique_dir(names, roots):
@@ -195,6 +196,9 @@ cells = [
 
             original_points = sample_for_display(original, 8_000)
             cropped_points = sample_for_display(cropped, 15_000)
+            cropped_display_points = points_in_oriented_crop_frame(
+                cropped_points, original.bounds, current_rotation(),
+            )
             original_views = [
                 (18, -65, "Original — perspective"), (0, 0, "Original — front"),
                 (0, 180, "Original — rear"), (0, 90, "Original — left side"),
@@ -210,7 +214,7 @@ cells = [
             ]
             figure = plt.figure(figsize=(25, 16))
             original_extent = np.ptp(original_points, axis=0).clip(min=1e-6)
-            crop_extent = np.ptp(cropped_points, axis=0).clip(min=1e-6)
+            crop_extent = np.ptp(cropped_display_points, axis=0).clip(min=1e-6)
 
             def draw(subplot_index, points, extent, elevation, azimuth, title, size):
                 axis = figure.add_subplot(3, 5, subplot_index, projection="3d")
@@ -226,18 +230,18 @@ cells = [
             for index, (elevation, azimuth, title) in enumerate(original_views, start=1):
                 draw(index, original_points, original_extent, elevation, azimuth, title, 0.8)
             for index, (elevation, azimuth, title) in enumerate(crop_views, start=1):
-                draw(5 + index, cropped_points, crop_extent, elevation, azimuth, title, 0.65)
+                draw(5 + index, cropped_display_points, crop_extent, elevation, azimuth, title, 0.65)
 
             figure.suptitle(
                 f"Oriented reference-mesh crop — {scene} | rotation XYZ = {np.round(current_rotation(), 1)}°",
                 fontsize=16, y=.985,
             )
             figure.text(.01, .95, "Row 1: original mesh", fontsize=12, fontweight="bold")
-            figure.text(.01, .625, "Rows 2–3: proposed crop", fontsize=12, fontweight="bold")
+            figure.text(.01, .625, "Rows 2–3: proposed crop in rotated crop frame", fontsize=12, fontweight="bold")
             figure.subplots_adjust(left=.025, right=.985, bottom=.035, top=.94, wspace=.08, hspace=.18)
             plt.show(); plt.close(figure)
             display(pd.DataFrame([mesh_summary(cropped, scene)]).round(3))
-            del original, cropped, original_points, cropped_points
+            del original, cropped, original_points, cropped_points, cropped_display_points
             gc.collect()
 
     def approve(_):
