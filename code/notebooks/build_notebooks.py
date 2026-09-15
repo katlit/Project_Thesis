@@ -995,7 +995,7 @@ write_notebook("03_A_scene_crop_method_inputs.ipynb", [
 ])
 
 
-write_notebook("04_eda_8view_comparison.ipynb", [
+write_notebook("05_eda_8view_comparison.ipynb", [
     md('''
     # 0.1 — Combined EDA and sparse-view split
 
@@ -1226,7 +1226,7 @@ write_notebook("04_eda_8view_comparison.ipynb", [
 ])
 
 # Replace the legacy split-building EDA above with a focused analysis of notebook 03_A outputs.
-write_notebook("04_eda_8view_comparison.ipynb", [
+write_notebook("05_eda_8view_comparison.ipynb", [
     md('''
     # 04 — Eight-view reconstruction-input EDA
 
@@ -1332,5 +1332,8 @@ write_notebook("04_eda_8view_comparison.ipynb", [
     Both datasets contribute eight training inputs per retained car; the datasets differ in their number of car scenes. Therefore raw image counts should not be interpreted as balanced sampling. Use 3DRealCar non-training frames only for held-out rendering metrics. Industrial training-view agreement is not unseen-view performance.
     '''),
 ])
+
+from build_04_reflection_and_05_eda import build as build_reflection_and_eda
+build_reflection_and_eda()
 
 print("Built numbered notebooks in code/notebooks")

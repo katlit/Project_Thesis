@@ -31,3 +31,20 @@ def masked_image_statistics(image_path, mask_path, sample_size=(256, 256), thres
         "blue_mean": float(pixels[:, 2].mean()),
     }
 
+
+def paired_foreground_change(before_path, after_path, mask_path, sample_size=(256, 256), threshold=0.5):
+    """Aligned change statistics for standard and reflection-handled inputs."""
+    with Image.open(before_path) as opened:
+        before = np.asarray(opened.convert("RGB").resize(sample_size, Image.Resampling.BILINEAR), dtype=np.float32) / 255
+    with Image.open(after_path) as opened:
+        after = np.asarray(opened.convert("RGB").resize(sample_size, Image.Resampling.BILINEAR), dtype=np.float32) / 255
+    with Image.open(mask_path) as opened:
+        mask = np.asarray(opened.convert("L").resize(sample_size, Image.Resampling.NEAREST), dtype=np.float32) / 255
+    foreground = mask >= threshold
+    error = after[foreground] - before[foreground]
+    mse = float(np.mean(error ** 2))
+    return {
+        "ref_change_mae": float(np.mean(np.abs(error))),
+        "ref_change_rmse": float(np.sqrt(mse)),
+        "ref_change_psnr": float(-10 * np.log10(max(mse, 1e-10))),
+    }
