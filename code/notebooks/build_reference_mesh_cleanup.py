@@ -47,7 +47,7 @@ cells = [
     subprocess.run(command, check=True)
     sys.path.insert(0, str(CODE_ROOT / "code"))
 
-    from src.mesh_cleanup import crop_mesh, export_clean_reference, load_triangle_mesh, mesh_summary, sample_for_display
+    from src.mesh_cleanup import crop_mesh_oriented, export_clean_reference, load_triangle_mesh, mesh_summary, sample_for_display
     '''),
     code('''
     def find_unique_dir(names, roots):
@@ -76,9 +76,10 @@ cells = [
     ## Interactive crop and approval
 
     The sliders are normalized to each mesh's complete bounds: `0` is its minimum and `1` its maximum on that axis.
-    Adjust the three ranges until the right-hand preview contains the complete car but no surrounding scan. Check at
-    least two rotations mentally by rerunning the preview; the plot shows two automatically. Click **Approve and save**
-    only when the complete car is retained. Saving the crop does not yet export a mesh.
+    Adjust the three ranges until every preview contains the complete car but no surrounding scan. The proposed crop is
+    shown from front, rear, both sides, and two perspectives. These names assume the scanner axes follow the usual scene
+    orientation; even if front/side labels are swapped, all four opposing horizontal directions are covered. Click
+    **Approve and save** only when the complete car is retained. Saving the crop does not yet export a mesh.
     '''),
     code('''
     saved = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.is_file() else {}
@@ -87,26 +88,51 @@ cells = [
     sliders = [widgets.FloatRangeSlider(value=default_box[i], min=0, max=1, step=.01,
                description=axis, continuous_update=False, layout=widgets.Layout(width="700px"))
                for i, axis in enumerate(["X", "Y", "Z"])]
+    rotation_sliders = [widgets.FloatSlider(value=0, min=-45, max=45, step=1,
+               description=f"Rotate {axis}", continuous_update=False, readout_format=".0f",
+               layout=widgets.Layout(width="700px")) for axis in ["X", "Y", "Z"]]
     preview_button = widgets.Button(description="Preview crop", button_style="info")
     approve_button = widgets.Button(description="Approve and save", button_style="success")
     output = widgets.Output()
 
     def current_box(): return [list(slider.value) for slider in sliders]
+    def current_rotation(): return [float(slider.value) for slider in rotation_sliders]
 
     def load_saved_box(change=None):
         box = saved.get(scene_widget.value, {}).get("normalized_box", default_box)
         for slider, limits in zip(sliders, box): slider.value = tuple(limits)
+        rotation = saved.get(scene_widget.value, {}).get("rotation_degrees", [0, 0, 0])
+        for slider, value in zip(rotation_sliders, rotation): slider.value = float(value)
 
     def show_preview(_=None):
         with output:
             clear_output(wait=True)
             scene = scene_widget.value
             original = load_triangle_mesh(mesh_paths[scene])
-            try: cropped = crop_mesh(original, current_box())
+            try: cropped = crop_mesh_oriented(original, current_box(), current_rotation())
             except Exception as error:
                 print("Invalid crop:", error); return
             original_points = sample_for_display(original, 5_000)
             cropped_points = sample_for_display(cropped, 8_000)
+            original_views = [
+                (18, -65, "Perspective"), (0, 0, "Front"),
+                (0, 180, "Rear"), (0, 90, "Left side"), (0, -90, "Right side"),
+            ]
+            original_figure = plt.figure(figsize=(24, 5.5))
+            original_extent = np.ptp(original_points, axis=0).clip(min=1e-6)
+            for index, (elevation, azimuth, title) in enumerate(original_views, start=1):
+                axis = original_figure.add_subplot(1, 5, index, projection="3d")
+                axis.scatter(*original_points.T, s=0.8, c="0.25", linewidths=0)
+                axis.set_title(f"Original — {title}")
+                axis.set_box_aspect(original_extent)
+                axis.view_init(elevation, azimuth)
+                axis.set_xticks([]); axis.set_yticks([]); axis.set_zticks([])
+                axis.set_xlabel("X", color="crimson", fontweight="bold", labelpad=8)
+                axis.set_ylabel("Y", color="forestgreen", fontweight="bold", labelpad=8)
+                axis.set_zlabel("Z", color="royalblue", fontweight="bold", labelpad=8)
+            original_figure.suptitle(f"Original mesh from five fixed directions — {scene}", fontsize=15)
+            original_figure.subplots_adjust(left=.02, right=.98, bottom=.05, top=.87, wspace=.08)
+            plt.show(); plt.close(original_figure)
             fig = plt.figure(figsize=(18, 8))
             for index, (points, title, azimuth) in enumerate([
                 (original_points, "Original mesh including background", -65),
@@ -114,10 +140,102 @@ cells = [
                 (cropped_points, "Proposed crop — second angle", 25),
             ], start=1):
                 axis = fig.add_subplot(1, 3, index, projection="3d")
-                axis.scatter(*points.T, s=.15, c="0.25")
+                axis.scatter(*points.T, s=0.8, c="0.25", linewidths=0)
                 axis.set_title(title); axis.set_box_aspect(np.ptp(points, axis=0).clip(min=1e-6))
                 axis.view_init(18, azimuth)
-            plt.tight_layout(); plt.show(); plt.close(fig)
+                axis.set_xlabel("X", color="crimson", fontweight="bold", labelpad=8)
+                axis.set_ylabel("Y", color="forestgreen", fontweight="bold", labelpad=8)
+                axis.set_zlabel("Z", color="royalblue", fontweight="bold", labelpad=8)
+                axis.text2D(0.02, 0.96, "X red   Y green   Z blue",
+                            transform=axis.transAxes, fontsize=9, fontweight="bold")
+            plt.close(fig)  # obsolete three-panel overview; intentionally not displayed
+            views = [
+                (18, -65, "Perspective 1"), (18, 25, "Perspective 2"),
+                (0, 0, "Front"), (0, 180, "Rear"),
+                (0, 90, "Left side"), (0, -90, "Right side"),
+                (90, -90, "Top"), (-90, -90, "Bottom"),
+                (35, 115, "Elevated perspective 3"),
+                (35, -155, "Elevated perspective 4"),
+            ]
+            detail = plt.figure(figsize=(24, 11))
+            crop_extent = np.ptp(cropped_points, axis=0).clip(min=1e-6)
+            for index, (elevation, azimuth, title) in enumerate(views, start=1):
+                axis = detail.add_subplot(2, 5, index, projection="3d")
+                axis.scatter(*cropped_points.T, s=0.65, c="0.25", linewidths=0)
+                axis.set_title(title)
+                axis.set_box_aspect(crop_extent)
+                axis.view_init(elevation, azimuth)
+                axis.set_xticks([]); axis.set_yticks([]); axis.set_zticks([])
+                axis.set_xlabel("X", color="crimson", fontweight="bold", labelpad=8)
+                axis.set_ylabel("Y", color="forestgreen", fontweight="bold", labelpad=8)
+                axis.set_zlabel("Z", color="royalblue", fontweight="bold", labelpad=8)
+                axis.text2D(0.02, 0.96, "X red   Y green   Z blue",
+                            transform=axis.transAxes, fontsize=9, fontweight="bold")
+            detail.suptitle(f"Proposed crop from eight fixed directions — {scene}", fontsize=15)
+            detail.subplots_adjust(left=.03, right=.97, bottom=.05, top=.90, wspace=.10, hspace=.16)
+            detail.suptitle(f"Proposed crop from ten fixed directions — {scene}", fontsize=15)
+            plt.show(); plt.close(detail)
+            display(pd.DataFrame([mesh_summary(cropped, scene)]).round(3))
+            del original, cropped, original_points, cropped_points
+            gc.collect()
+
+    # Final preview implementation: one 3x5 grid directly below the controls.
+    def show_preview(_=None):
+        with output:
+            clear_output(wait=True)
+            scene = scene_widget.value
+            original = load_triangle_mesh(mesh_paths[scene])
+            try:
+                cropped = crop_mesh_oriented(original, current_box(), current_rotation())
+            except Exception as error:
+                print("Invalid crop:", error)
+                del original
+                gc.collect()
+                return
+
+            original_points = sample_for_display(original, 8_000)
+            cropped_points = sample_for_display(cropped, 15_000)
+            original_views = [
+                (18, -65, "Original — perspective"), (0, 0, "Original — front"),
+                (0, 180, "Original — rear"), (0, 90, "Original — left side"),
+                (0, -90, "Original — right side"),
+            ]
+            crop_views = [
+                (18, -65, "Crop — perspective 1"), (18, 25, "Crop — perspective 2"),
+                (35, 115, "Crop — perspective 3"), (35, -155, "Crop — perspective 4"),
+                (55, -65, "Crop — high perspective"),
+                (0, 0, "Crop — front"), (0, 180, "Crop — rear"),
+                (0, 90, "Crop — left side"), (0, -90, "Crop — right side"),
+                (90, -90, "Crop — top"),
+            ]
+            figure = plt.figure(figsize=(25, 16))
+            original_extent = np.ptp(original_points, axis=0).clip(min=1e-6)
+            crop_extent = np.ptp(cropped_points, axis=0).clip(min=1e-6)
+
+            def draw(subplot_index, points, extent, elevation, azimuth, title, size):
+                axis = figure.add_subplot(3, 5, subplot_index, projection="3d")
+                axis.scatter(*points.T, s=size, c="0.20", linewidths=0, depthshade=True)
+                axis.set_title(title, fontsize=11)
+                axis.set_box_aspect(extent)
+                axis.view_init(elevation, azimuth)
+                axis.set_xticks([]); axis.set_yticks([]); axis.set_zticks([])
+                axis.set_xlabel("X", color="crimson", fontweight="bold", labelpad=7)
+                axis.set_ylabel("Y", color="forestgreen", fontweight="bold", labelpad=7)
+                axis.set_zlabel("Z", color="royalblue", fontweight="bold", labelpad=7)
+
+            for index, (elevation, azimuth, title) in enumerate(original_views, start=1):
+                draw(index, original_points, original_extent, elevation, azimuth, title, 0.8)
+            for index, (elevation, azimuth, title) in enumerate(crop_views, start=1):
+                draw(5 + index, cropped_points, crop_extent, elevation, azimuth, title, 0.65)
+
+            figure.suptitle(
+                f"Oriented reference-mesh crop — {scene} | rotation XYZ = {np.round(current_rotation(), 1)}°",
+                fontsize=16, y=.985,
+            )
+            figure.text(.01, .95, "Row 1: original mesh", fontsize=12, fontweight="bold")
+            figure.text(.01, .625, "Rows 2–3: proposed crop", fontsize=12, fontweight="bold")
+            figure.subplots_adjust(left=.025, right=.985, bottom=.035, top=.94, wspace=.08, hspace=.18)
+            plt.show(); plt.close(figure)
             display(pd.DataFrame([mesh_summary(cropped, scene)]).round(3))
             del original, cropped, original_points, cropped_points
             gc.collect()
@@ -125,8 +243,8 @@ cells = [
     def approve(_):
         scene = scene_widget.value
         original = load_triangle_mesh(mesh_paths[scene])
-        cropped = crop_mesh(original, current_box())
-        saved[scene] = {"normalized_box": current_box(), "approved": True,
+        cropped = crop_mesh_oriented(original, current_box(), current_rotation())
+        saved[scene] = {"normalized_box": current_box(), "rotation_degrees": current_rotation(), "approved": True,
                         "raw_mesh": str(mesh_paths[scene]), "cropped_summary": mesh_summary(cropped, scene)}
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps(saved, indent=2))
@@ -137,7 +255,11 @@ cells = [
     scene_widget.observe(load_saved_box, names="value")
     preview_button.on_click(show_preview); approve_button.on_click(approve)
     load_saved_box()
-    display(widgets.VBox([scene_widget, *sliders, widgets.HBox([preview_button, approve_button]), output]))
+    display(widgets.VBox([
+        scene_widget, widgets.HTML("<b>Crop limits in the rotated frame</b>"), *sliders,
+        widgets.HTML("<b>Temporary crop-box rotation (degrees)</b>"), *rotation_sliders,
+        widgets.HBox([preview_button, approve_button]), output,
+    ]))
     show_preview()
     '''),
     md('''## Approval status and guarded batch export'''),
@@ -160,7 +282,10 @@ cells = [
         export_rows = []
         for scene in scenes:
             original = load_triangle_mesh(mesh_paths[scene])
-            cleaned = crop_mesh(original, saved[scene]["normalized_box"])
+            cleaned = crop_mesh_oriented(
+                original, saved[scene]["normalized_box"],
+                saved[scene].get("rotation_degrees", [0, 0, 0]),
+            )
             destination = OUTPUT_ROOT / scene / "car_reference.obj"
             export_clean_reference(cleaned, destination, overwrite=OVERWRITE)
             export_rows.append(mesh_summary(cleaned, scene, destination))
