@@ -42,15 +42,29 @@ def real_view_loss(render_rgb, render_alpha, target_rgb, foreground_mask,
 def synthetic_view_loss(render_rgb, render_alpha, target_rgb, validity_mask,
                         confidence, lambda_ssim=0.2, lambda_silhouette=0.02,
                         eps=1e-8):
-    """Confidence is detached: pseudo-targets cannot increase their own authority."""
+    """Apply absolute confidence attenuation over the valid synthetic pixels.
+
+    The denominator is the valid-pixel count, not the confidence sum. Thus a
+    uniformly low-confidence pseudo-view produces a proportionally smaller
+    loss and gradient. Confidence is detached so pseudo-targets cannot change
+    their own authority.
+    """
     validity = _mask4(validity_mask)
-    weight = validity * _mask4(confidence).detach().clamp(0, 1)
-    rgb = (torch.abs(render_rgb - target_rgb) * weight).sum() / (3 * weight.sum() + eps)
-    ssim = ((1 - ssim_map(render_rgb, target_rgb)) * weight).sum() / (weight.sum() + eps)
+    confidence = _mask4(confidence).detach().clamp(0, 1)
+    weight = validity * confidence
+    valid_count = validity.sum()
+    rgb = (torch.abs(render_rgb - target_rgb) * weight).sum() / (3 * valid_count + eps)
+    ssim = ((1 - ssim_map(render_rgb, target_rgb)) * weight).sum() / (valid_count + eps)
     # Only supported pseudo-foreground is supervised; unknown holes receive no opacity target.
     silhouette_map = F.binary_cross_entropy(
         render_alpha.clamp(1e-6, 1 - 1e-6), torch.ones_like(render_alpha), reduction="none"
     )
-    silhouette = (silhouette_map * weight).sum() / (weight.sum() + eps)
+    silhouette = (silhouette_map * weight).sum() / (valid_count + eps)
     total = (1 - lambda_ssim) * rgb + lambda_ssim * ssim + lambda_silhouette * silhouette
-    return total, {"rgb": rgb, "ssim": ssim, "silhouette": silhouette, "mean_weight": weight.mean()}
+    mean_valid_confidence = weight.sum() / (valid_count + eps)
+    return total, {
+        "rgb": rgb,
+        "ssim": ssim,
+        "silhouette": silhouette,
+        "mean_valid_confidence": mean_valid_confidence,
+    }
