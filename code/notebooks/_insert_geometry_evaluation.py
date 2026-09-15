@@ -1,8 +1,8 @@
-"""One-off mechanical insertion that preserves notebook 05 cells and outputs."""
+"""One-off mechanical insertion that preserves EXP_VGGT_full cells and outputs."""
 import json
 from pathlib import Path
 
-path = Path(__file__).with_name("05_VGGT_full.ipynb")
+path = Path(__file__).with_name("EXP_VGGT_full.ipynb")
 notebook = json.loads(path.read_text(encoding="utf-8"))
 
 first = notebook["cells"][1]
@@ -65,7 +65,7 @@ else:
     if not mesh_path.is_file():
         raise FileNotFoundError(
             f"Clean car reference missing: {mesh_path}\n"
-            "Run 04_hq200_reference_mesh_cleanup.ipynb and approve this scene first. "
+            "Run 03_B_hq200_reference_mesh_cleanup.ipynb and approve this scene first. "
             "The raw textured_output.obj is deliberately not used because its background invalidates the metrics."
         )
 

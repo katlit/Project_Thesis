@@ -14,7 +14,7 @@ def code(text):
 
 cells = [
     md('''
-    # 04 — HQ200 car-only reference mesh cleaning
+    # 03_B — HQ200 car-only reference mesh cleaning
 
     The supplied scanner mesh contains the car and background geometry. This notebook lets you inspect every scene,
     choose an explicit 3D crop, preview it, and approve it before export. Raw OBJ files are never modified.
@@ -176,6 +176,6 @@ cells = [
 
 notebook = {"cells": cells, "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
             "language_info": {"name": "python", "version": "3"}}, "nbformat": 4, "nbformat_minor": 5}
-(HERE / "04_hq200_reference_mesh_cleanup.ipynb").write_text(
+(HERE / "03_B_hq200_reference_mesh_cleanup.ipynb").write_text(
     json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
 )

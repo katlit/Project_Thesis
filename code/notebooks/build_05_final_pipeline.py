@@ -17,7 +17,7 @@ def code(value):
 
 cells = [
     md(r'''
-    # 05 — Final unified pipeline: VGGT → dense pseudo-views → adaptive 3DGS
+    # EXP — Final unified pipeline: VGGT → dense pseudo-views → adaptive 3DGS
 
     This single GPU notebook takes one annotated eight-view car scene through the complete selected method:
 
@@ -454,10 +454,10 @@ notebook = {
                  "language_info": {"name": "python", "version": "3"}},
     "nbformat": 4, "nbformat_minor": 5,
 }
-(HERE / "05_VGGT_full.ipynb").write_text(
+(HERE / "EXP_VGGT_full.ipynb").write_text(
     json.dumps(notebook, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
 )
-print("Built 05_VGGT_full.ipynb")
+print("Built EXP_VGGT_full.ipynb")
 
 # Keep the reference-mesh evaluation in regenerated copies while preserving
 # the insertion logic separately from the already large notebook builder.

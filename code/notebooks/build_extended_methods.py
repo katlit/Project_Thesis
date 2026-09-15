@@ -42,12 +42,12 @@ PROJECT_ROOT = Path("/content/drive/MyDrive/ITU/3D/Thesis")
 '''
 
 
-save("06_LagerNVS_confidence_3dgs.ipynb", [
-    md('''# 06 - Learned LagerNVS views and confidence-weighted 3DGS
+save("EXP_LagerNVS_confidence_3dgs.ipynb", [
+    md('''# EXP - Learned LagerNVS views and confidence-weighted 3DGS
 
 This notebook tests learned Plucker-ray NVS. LagerNVS generates dense RGB views. VGGT geometry supplies a separate validity mask and confidence weight. The learned RGB is never treated as ground truth without geometric support.
 
-Run notebook 05 first because this notebook loads its `vggt_geometry.npz`. The LagerNVS checkpoint is gated; request access on Hugging Face and provide a token when prompted.'''),
+Run `EXP_VGGT_full.ipynb` first because this notebook loads its `vggt_geometry.npz`. The LagerNVS checkpoint is gated; request access on Hugging Face and provide a token when prompted.'''),
     code(r'''# Start from LagerNVS's official dependency file. Open3D and websockets
 # are used only by its interactive viewers, not by this notebook. Open3D has no
 # wheel for the current Colab Python, and would abort the whole installation.
@@ -272,8 +272,8 @@ print(video_path); display(Video(str(video_path), embed=True, html_attributes="c
 ])
 
 
-save("07_VGGT_X_MCMC_3DGS.ipynb", [
-    md('''# 07 - VGGT-X MCMC-3DGS
+save("EXP_VGGT_X_MCMC_3DGS.ipynb", [
+    md('''# EXP - VGGT-X MCMC-3DGS
 
 This notebook runs the official baseline from beginning to end:
 
@@ -282,7 +282,7 @@ This notebook runs the official baseline from beginning to end:
 3. inspect the registered cameras and sparse points;
 4. train CityGaussian with its MCMC-3DGS pose-optimization configuration;
 5. evaluate the eight real views;
-6. save a closed-orbit video and individual frames for notebook 08.
+6. save a closed-orbit video and individual frames for the comparison experiment.
 
 VGGT-X was designed for dense image collections. Eight images are used here for a fair sparse-view comparison, so a failure is also a meaningful experimental result.'''),
     md('''## Important environment design
@@ -297,7 +297,7 @@ from PIL import Image
 from IPython.display import Video, display
 
 if subprocess.run(["nvidia-smi"], capture_output=True).returncode != 0:
-    raise RuntimeError("Connect a GPU runtime before running notebook 07.")
+    raise RuntimeError("Connect a GPU runtime before running this experiment.")
 
 DATASET = "3DRealCar"
 SCENE = None
@@ -584,7 +584,7 @@ print("Saved frames:", len(list(ORBIT_FRAMES.glob("view_*.png"))))
 display(Video(str(ORBIT_VIDEO), embed=True, html_attributes="controls autoplay loop muted"))'''),
     md('''## 8. Final output check
 
-Notebook 08 needs `closed_orbit.mp4`, `orbit_frames/`, and the official CityGaussian output. Missing files are reported before you disconnect the runtime.'''),
+The comparison experiment needs `closed_orbit.mp4`, `orbit_frames/`, and the official CityGaussian output. Missing files are reported before you disconnect the runtime.'''),
     code(r'''checks = {
     "COLMAP cameras": SPARSE / "cameras.bin",
     "COLMAP images": SPARSE / "images.bin",
@@ -596,12 +596,12 @@ Notebook 08 needs `closed_orbit.mp4`, `orbit_frames/`, and the official CityGaus
 for label, path in checks.items():
     print("OK     " if path.exists() else "MISSING", label, path)
 if not all(path.exists() for path in checks.values()):
-    raise RuntimeError("Notebook 07 is incomplete. Read the first missing item above.")'''),
+    raise RuntimeError("The VGGT-X experiment is incomplete. Read the first missing item above.")'''),
 ])
 
 
-save("08_compare_nvs_and_3dgs.ipynb", [
-    md('''# 08 - Compare learned NVS and 3DGS methods
+save("EXP_compare_nvs_and_3dgs.ipynb", [
+    md('''# EXP - Compare learned NVS and 3DGS methods
 
 This notebook does not train anything. It loads finished artifacts and shows them together:
 

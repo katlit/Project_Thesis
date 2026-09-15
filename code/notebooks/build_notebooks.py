@@ -129,7 +129,7 @@ print("Reusable code:", CODE_ROOT / "code" / "src")
 '''
 
 
-write_notebook("00_drive_access_test.ipynb", [
+write_notebook("EXP_drive_access_test.ipynb", [
     md('''
     # Test Google Drive data access
 
@@ -203,7 +203,7 @@ write_notebook("01_birefnet_original_resolution.ipynb", [
     - `masks/`: matching grayscale foreground masks;
     - `manifest.csv`: provenance, original size, output size, and status.
 
-    BiRefNet receives a temporary 1024×1024 tensor, but its mask is returned to the raw RGB dimensions. The saved RGB is never resized, padded, or upscaled. For each Industrial car, `images_raw/` and `images/` are compared and the folder with greater median pixel area is selected. Method-specific resizing happens in notebook 03.
+    BiRefNet receives a temporary 1024×1024 tensor, but its mask is returned to the raw RGB dimensions. The saved RGB is never resized, padded, or upscaled. For each Industrial car, `images_raw/` and `images/` are compared and the folder with greater median pixel area is selected. Method-specific resizing happens in notebook 03_A.
     '''),
     code('''
     !pip -q install "transformers>=4.39" safetensors kornia timm
@@ -395,7 +395,7 @@ write_notebook("01_birefnet_original_resolution.ipynb", [
     md('''
     ## Important reconstruction note
 
-    BiRefNet masks the object but does not improve camera poses or add image detail. This notebook preserves the original pixel grid, so it does not require an intrinsic-coordinate change. Notebook 03 records every later crop, scale, and padding offset needed to transform known intrinsics consistently.
+    BiRefNet masks the object but does not improve camera poses or add image detail. This notebook preserves the original pixel grid, so it does not require an intrinsic-coordinate change. Notebook 03_A records every later crop, scale, and padding offset needed to transform known intrinsics consistently.
     '''),
 ])
 
@@ -814,9 +814,9 @@ write_notebook("02_hq200_view_selection.ipynb", [
 ])
 
 
-write_notebook("03_scene_crop_method_inputs.ipynb", [
+write_notebook("03_A_scene_crop_method_inputs.ipynb", [
     md('''
-    # 03 — Shared scene crops and reconstruction inputs
+    # 03_A — Shared scene crops and reconstruction inputs
 
     This CPU notebook makes the vehicle larger without modifying the eight-view geometry independently. For each car it computes **one union crop from its eight selected training masks**, adds a configurable margin, and applies that same normalized rectangle to every view. Original BiRefNet files remain unchanged.
 
@@ -1225,12 +1225,12 @@ write_notebook("04_eda_8view_comparison.ipynb", [
     '''),
 ])
 
-# Replace the legacy split-building EDA above with a focused analysis of notebook 03 outputs.
+# Replace the legacy split-building EDA above with a focused analysis of notebook 03_A outputs.
 write_notebook("04_eda_8view_comparison.ipynb", [
     md('''
     # 04 — Eight-view reconstruction-input EDA
 
-    This notebook reads the **3DGS inputs produced by notebook 03** and compares exactly eight selected training views per retained scene. It does not resize or overwrite reconstruction images. A temporary 256×256 representation is used only to make descriptive statistics fast and comparable; this analysis resize is never saved as model input.
+    This notebook reads the **3DGS inputs produced by notebook 03_A** and compares exactly eight selected training views per retained scene. It does not resize or overwrite reconstruction images. A temporary 256×256 representation is used only to make descriptive statistics fast and comparable; this analysis resize is never saved as model input.
 
     3DRealCar held-out views remain available in the method manifest for later novel-view evaluation, but they are excluded from this input EDA. IndustrialInventory has only its eight reconstruction inputs.
     '''),
@@ -1252,7 +1252,7 @@ write_notebook("04_eda_8view_comparison.ipynb", [
     MANIFEST_PATH = METHOD_ROOT / "manifest.csv"
     EDA_ROOT = PROJECT_ROOT / "splits" / "sparse8"
     if not MANIFEST_PATH.is_file():
-        raise FileNotFoundError(f"Run notebook 03 with RUN_EXPORT=True first: {MANIFEST_PATH}")
+        raise FileNotFoundError(f"Run notebook 03_A with RUN_EXPORT=True first: {MANIFEST_PATH}")
 
     method_manifest = pd.read_csv(MANIFEST_PATH)
     eda_inputs = method_manifest.query("method == '3dgs' and split == 'train'").copy()
